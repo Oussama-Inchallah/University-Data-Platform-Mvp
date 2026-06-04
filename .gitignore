@@ -1,0 +1,24 @@
+# Environnement Python
+udp-env/
+__pycache__/
+*.pyc
+
+# Configuration locale
+**/.env
+.env
+
+# Données locales (Ignorées par Git)
+data/
+raw/
+
+# Spark & Hudi (Fichiers générés localement)
+spark-warehouse/
+metastore_db/
+derby.log
+.hoodie/
+
+# Logs généraux
+*.log
+
+# Dossiers ignorés explicitement
+docs/
