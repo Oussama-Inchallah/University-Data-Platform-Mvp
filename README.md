@@ -5,23 +5,33 @@ Projet MVP de Data Engineering permettant l'ingestion, le traitement et l'analys
 ## Installation rapide
 
 1. **Cloner le projet :**
-   ```bash
+  
+  ```bash
    git clone https://github.com/Oussama-Inchallah/University-Data-Platform-Mvp.git
    cd "University-Data-Platform-Mvp"
    ```
 
-2. **Démarrer l'infrastructure (MinIO) :**
+2. **Installer l'environnement Python :**
+
    ```bash
+   python -m venv udp-env
+   source udp-env/bin/activate  # Sur Windows: .\udp-env\Scripts\activate
+   pip install -r requirements.txt
+   ```
+
+3. **Démarrer l'infrastructure (MinIO) :**
+
+   ```bash
+   # Accéder au dossier
+   cd infra\docker
+
    # Créer le fichier .env
    cp .env.example .env
    
    # Lancer Docker
    docker compose up -d
-   ```
 
-3. **Installer l'environnement Python :**
-   ```bash
-   python -m venv udp-env
-   source udp-env/bin/activate  # Sur Windows: .\udp-env\Scripts\activate
-   pip install -r requirements.txt
+   # Revenir à la racine
+   cd ../..
+
    ```
