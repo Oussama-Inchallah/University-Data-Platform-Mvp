@@ -434,24 +434,6 @@ class GenericCrawler:
                     self.logger.critical("Seed URL failed. Aborting crawler.")
                     break
         
-        # Affichage des statistiques dans les logs Airflow sous forme de table
-        total = stats['pages_crawled'] + stats['intercepted_resources']
-        
-        table_border = "+" + "-"*35 + "+" + "-"*12 + "+"
-        self.logger.info("")
-        self.logger.info(table_border)
-        self.logger.info(f"| {'CRAWL STATISTICS':<33} | {'COUNT':<10} |")
-        self.logger.info(table_border)
-        self.logger.info(f"| {'Pages crawled':<33} | {stats['pages_crawled']:<10} |")
-        self.logger.info(f"| {'Intercepted resources':<33} | {stats['intercepted_resources']:<10} |")
-        self.logger.info(f"| {'Total objects stored':<33} | {total:<10} |")
-        self.logger.info(f"| {'Ignored/Filtered':<33} | {stats['ignored']:<10} |")
-        self.logger.info(f"| {'Skipped (Hash Match)':<33} | {stats['skipped_by_hash']:<10} |")
-        self.logger.info(f"| {'Errors encountered':<33} | {stats['errors']:<10} |")
-        self.logger.info(table_border)
-        self.logger.info("Downloads by destination bucket:")
-        for bucket, count in stats["downloaded_by_bucket"].items():
-            self.logger.info(f"  -> {bucket}: {count} objects")
         self.logger.info("==================================================")
         self.logger.info("                  URL DETAILS                     ")
         self.logger.info("==================================================")
@@ -476,6 +458,26 @@ class GenericCrawler:
         for u in stats["urls_errors"]:
             self.logger.info(f"  [ERROR] {u}")
             
+        self.logger.info("==================================================")
+
+        # Affichage des statistiques dans les logs Airflow sous forme de table
+        total = stats['pages_crawled'] + stats['intercepted_resources']
+        
+        table_border = "+" + "-"*35 + "+" + "-"*12 + "+"
+        self.logger.info("")
+        self.logger.info(table_border)
+        self.logger.info(f"| {'CRAWL STATISTICS':<33} | {'COUNT':<10} |")
+        self.logger.info(table_border)
+        self.logger.info(f"| {'Pages crawled':<33} | {stats['pages_crawled']:<10} |")
+        self.logger.info(f"| {'Intercepted resources':<33} | {stats['intercepted_resources']:<10} |")
+        self.logger.info(f"| {'Total objects stored':<33} | {total:<10} |")
+        self.logger.info(f"| {'Ignored/Filtered':<33} | {stats['ignored']:<10} |")
+        self.logger.info(f"| {'Skipped (Hash Match)':<33} | {stats['skipped_by_hash']:<10} |")
+        self.logger.info(f"| {'Errors encountered':<33} | {stats['errors']:<10} |")
+        self.logger.info(table_border)
+        self.logger.info("Downloads by destination bucket:")
+        for bucket, count in stats["downloaded_by_bucket"].items():
+            self.logger.info(f"  -> {bucket}: {count} objects")
         self.logger.info("==================================================")
         
         # Enregistrement des logs en fin d'exécution
