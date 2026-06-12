@@ -16,6 +16,10 @@ x-airflow-common:
     MINIO_ENDPOINT: minio:9000
     MINIO_ACCESS_KEY: ${MINIO_ROOT_USER:-minioadmin}
     MINIO_SECRET_KEY: ${MINIO_ROOT_PASSWORD:-minioadmin}
+    AIRFLOW_CONN_MINIO_S3_LOG: "aws://${MINIO_ROOT_USER:-minioadmin}:${MINIO_ROOT_PASSWORD:-minioadmin}@/?endpoint_url=http%3A%2F%2Fminio%3A9000"
+    AIRFLOW__LOGGING__REMOTE_LOGGING: 'true'
+    AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 's3://raw-logs/airflow-logs'
+    AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: 'minio_s3_log'
   volumes:
     - ../../dags:/opt/airflow/dags
     - ../../plugins:/opt/airflow/plugins

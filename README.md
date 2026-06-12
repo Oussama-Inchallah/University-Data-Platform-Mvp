@@ -11,14 +11,23 @@ Projet MVP de Data Engineering permettant l'ingestion, le traitement et l'analys
    cd University-Data-Platform-Mvp
    ```
 
-2. **Démarrer l'infrastructure (Airflow, MinIO, Postgres, Redis) :**
+2. **Configurer l'environnement :**
 
-   Nous utilisons des profils Docker Compose pour gérer les différentes couches de la plateforme. Pour lancer l'infrastructure d'ingestion complète :
+   Il faut créer un fichier `.env` contenant les variables secrètes à partir de l'exemple :
 
    ```bash
    cd infra/docker
+   cp .env.example .env
+   # Pensez à éditer le fichier .env si vous souhaitez changer les mots de passe par défaut
+   ```
+
+3. **Démarrer l'infrastructure (Airflow, MinIO, Postgres, Redis) :**
+
+   Nous utilisons des profils Docker compose pour gérer les différentes couches de la plateforme. Pour lancer l'infrastructure d'ingestion complète :
+
+   ```bash
    # Lancer l'infrastructure avec la couche d'ingestion
-   docker-compose --profile ingestion up -d --build
+   docker compose --profile ingestion up -d --build
    ```
 
    Airflow sera disponible sur `localhost:8080` et MinIO sur `localhost:9001`.
@@ -57,7 +66,6 @@ University-Data-Platform-Mvp/
 │   └── test_processing/
 │
 ├── docs/                   # Documentation globale
-│   ├── openAlexAPI/
 │   └── screenshots/        # Captures d'écran (architecture, ingestion, processing)
 │
 ├── scripts/                # Scripts utilitaires Bash/PowerShell
