@@ -1,11 +1,22 @@
 # Environnement Python
-udp-env/
+venv/
+env/
+.env
+.venv/
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
 # Configuration locale
 **/.env
-.env
+
+# Airflow
+airflow-logs/
+logs/
+airflow.db
+airflow.cfg
+webserver_config.py
 
 # Données locales (Ignorées par Git)
 data/
@@ -20,5 +31,12 @@ derby.log
 # Logs généraux
 *.log
 
-# Dossiers ignorés explicitement
-docs/
+# IDEs
+.vscode/
+.idea/
+
+# Fichiers de backup
+*.bak
+
+# Fichiers locaux persos
+docs/*.md

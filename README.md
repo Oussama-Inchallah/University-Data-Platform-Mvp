@@ -6,65 +6,59 @@ Projet MVP de Data Engineering permettant l'ingestion, le traitement et l'analys
 
 1. **Cloner le projet :**
   
-  ```bash
+   ```bash
    git clone https://github.com/Oussama-Inchallah/University-Data-Platform-Mvp.git
-   cd "University-Data-Platform-Mvp"
-   ```
-   
-2. **Installer l'environnement Python :**
-
-   ```bash
-   python -m venv udp-env
-   source udp-env/bin/activate  # Sur Windows: .\udp-env\Scripts\activate
-   pip install -r requirements.txt
+   cd University-Data-Platform-Mvp
    ```
 
-3. **Démarrer l'infrastructure (MinIO) :**
+2. **Démarrer l'infrastructure (Airflow, MinIO, Postgres, Redis) :**
+
+   Nous utilisons des profils Docker Compose pour gérer les différentes couches de la plateforme. Pour lancer l'infrastructure d'ingestion complète :
 
    ```bash
-   # Accéder au dossier
    cd infra/docker
-
-   # Créer le fichier .env
-   cp .env.example .env
-   
-   # Lancer Docker
-   docker compose up -d
-
-   # Revenir à la racine
-   cd ../..
-
+   # Lancer l'infrastructure avec la couche d'ingestion
+   docker-compose --profile ingestion up -d --build
    ```
 
-## Project Architecture & Directory Structure
+   Airflow sera disponible sur `localhost:8080` et MinIO sur `localhost:9001`.
 
-Here is an overview of the project's folder structure, including the role of each directory and what it contains:
+## Architecture du Projet & Structure des Dossiers
+
+Voici un aperçu de la structure du projet après la consolidation de la plateforme de données et de l'orchestrateur :
 
 ```text
 University-Data-Platform-Mvp/
-├── infra/                 # Infrastructure and platform configuration
-│   ├── docker/            # Docker Compose files to spin up MinIO, Spark, Hive, Elasticsearch, etc.
-│   ├── elastic_mappings/  # Elasticsearch index mappings and configurations
-│   ├── hive_ddl/          # Hive Metastore table definitions (DDL) for Hudi tables
-│   └── metabase_dashboards/# Exported or predefined Metabase dashboard configurations
-├── screenshots/           # Images showcasing the platform's features, architecture, and UI
-│   ├── architecture/      # Architecture diagrams and system design overviews
-│   ├── dashboards/        # Screenshots of Metabase and other BI or monitoring dashboards
-│   ├── ingestion/         # Screenshots showing data crawling, API fetching, or MinIO raw zone
-│   └── processing/        # Screenshots of Spark UI, ETL logs, or Hudi curated zone
-├── scripts/               # Utility scripts for executing pipelines (e.g., PowerShell run scripts)
-├── src/                   # Main source code for the data platform
-│   ├── common/            # Shared utilities, logging, configuration, and helpers
-│   ├── ingestion/         # Ingestion layer to collect data from various sources
-│   │   ├── api/           # API connectors (e.g., OpenAlex, Crossref)
-│   │   ├── files/         # File parsers (PDF, CSV, JSON, documents)
-│   │   └── web/           # Web scrapers (Requests, BeautifulSoup, Playwright)
-│   └── processing/        # Processing and transformation layer (Apache Spark/Hudi)
-│       ├── jobs/          # Spark ETL jobs (cleaning, deduplication, enrichment)
-│       └── hudi_utils.py  # Utility functions for interacting with Apache Hudi
-├── tests/                 # Unit and integration tests
-│   ├── test_ingestion/    # Tests for ingestion scripts and scrapers
-│   └── test_processing/   # Tests for processing jobs and Hudi utilities
-├── requirements.txt       # Python dependencies for the project
-└── udp-env/               # Local Python virtual environment (ignored in version control)
+├── infra/                  # Infrastructure as Code
+│   ├── docker/
+│   │   ├── docker-compose.yml   # Fichier central avec Profils Docker (ingestion, processing, etc.)
+│   │   ├── Dockerfile           # Build custom d'Airflow avec Playwright
+│   │   ├── requirements.txt     # Dépendances Python pour l'image Airflow
+│   │   └── .env                 # Variables d'environnement
+│   ├── elastic_mappings/        # Index Elasticsearch
+│   ├── hive_ddl/                # Schémas Hive Metastore pour Hudi
+│   └── metabase_dashboards/     # Configurations de tableaux de bord Metabase
+│
+├── dags/                   # Orchestration Centrale (Airflow)
+│   ├── ingestion/          # DAGs de crawling et de collecte d'API
+│   ├── processing/         # Futurs DAGs pour déclencher Hudi/Spark
+│   └── serving/            # Futurs DAGs pour l'exportation vers Elastic/Metabase
+│
+├── plugins/                # Code Custom Airflow
+│   └── crawler/            # Le moteur Python Crawler Universel
+│
+├── src/                    # Logique Métier Indépendante (Agnostique d'Airflow)
+│   ├── processing/         # Scripts PySpark (ex: hudi_utils.py)
+│   ├── common/             # Utilitaires partagés
+│   └── serving/            # Scripts de chargement de données finales
+│
+├── tests/                  # Tests unitaires et d'intégration
+│   ├── test_ingestion/
+│   └── test_processing/
+│
+├── docs/                   # Documentation globale
+│   ├── openAlexAPI/
+│   └── screenshots/        # Captures d'écran (architecture, ingestion, processing)
+│
+├── scripts/                # Scripts utilitaires Bash/PowerShell
 ```
