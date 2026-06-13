@@ -35,16 +35,32 @@ class StorageRouter:
         parsed_url = urlparse(url)
         now = datetime.utcnow()
         
+        from urllib.parse import unquote
+        # On décode l'URL pour transformer les %D8%A5 en caractères arabes réels
+        decoded_path = unquote(parsed_url.path)
+        
         # Extraction stricte du nom du fichier depuis le chemin
-        file_name = parsed_url.path.split('/')[-1]
+        file_name = decoded_path.split('/')[-1]
         
         if not file_name:
-            # L'URL se termine par un slash (ex: /biologie/)
-            path_parts_full = [p for p in parsed_url.path.split('/') if p]
-            if path_parts_full:
-                file_name = f"{path_parts_full[-1]}-index.html"
+            # L'URL se termine par un slash (ex: /biologie/ ou /img/)
+            path_parts_full = [p for p in decoded_path.split('/') if p]
+            
+            import mimetypes
+            # Deviner l'extension d'après le vrai Content-Type (ex: image/jpeg -> .jpg)
+            ext = mimetypes.guess_extension(content_type.split(';')[0]) or ""
+            
+            if 'text/html' in content_type:
+                suffix = "-index.html"
             else:
-                file_name = "index.html"
+                # Si ce n'est pas du HTML, on utilise l'extension devinée (ex: .jpg, .pdf)
+                # Si mimetypes ne trouve rien et que l'URL n'a pas d'extension, on ajoute juste le suffixe vide.
+                suffix = ext if ext else ""
+                
+            if path_parts_full:
+                file_name = f"{path_parts_full[-1]}{suffix}"
+            else:
+                file_name = f"index{suffix}" if suffix else "unknown_file"
             
         # Si l'URL contient des paramètres de requête (ex: API Supabase ?id=123)
         # ou un fragment (#) utilisé par les SPAs (ex: annonce.html#1181),
@@ -67,6 +83,20 @@ class StorageRouter:
         # Si c'est du HTML et qu'il n'y a pas d'extension, on s'assure qu'il finit par .html
         if 'text/html' in content_type and not file_name.endswith('.html'):
             file_name += ".html"
+            
+        # TRONCATURE SÉCURITÉ OS : Le nom de fichier ne doit pas dépasser 255 octets (limite Linux Ext4/NTFS).
+        # Certains slugs CMS (ex: une phrase entière avec des tirets) dépassent cette limite.
+        # S'il est trop long, on le coupe à 150 caractères et on ajoute un petit hash pour garantir l'unicité.
+        file_bytes_len = len(file_name.encode('utf-8'))
+        if file_bytes_len > 200:
+            import hashlib
+            name_hash = hashlib.md5(file_name.encode('utf-8')).hexdigest()[:8]
+            if '.' in file_name:
+                base_name, ext = file_name.rsplit('.', 1)
+                file_name = f"{base_name[:150]}_{name_hash}.{ext}"
+            else:
+                file_name = f"{file_name[:150]}_{name_hash}"
+        
         
         # Le storage_path correspond à la structure partitionnée (sans l'arborescence du site)
         # On utilise strictement le domain_prefix (ex: fsac.univh2c.ma) même si l'URL vient d'ailleurs
@@ -86,7 +116,7 @@ class StorageRouter:
                 # COLLISION DE NOM DÉTECTÉE !
                 # Un fichier avec ce nom existe déjà, mais le contenu est différent.
                 # On ajoute le chemin des dossiers au nom de fichier pour le rendre unique (ex: MR_GL.pdf).
-                path_parts = [p for p in parsed_url.path.split('/') if p][:-1]
+                path_parts = [p for p in decoded_path.split('/') if p][:-1]
                 if path_parts:
                     dir_prefix = "_".join(path_parts)
                     file_name = f"{dir_prefix}_{file_name}"

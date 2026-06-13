@@ -389,7 +389,7 @@ class GenericCrawler:
                 content, content_type, final_url = res
                 
                 uploaded = self.storage_router.upload_to_minio(
-                    url=url, 
+                    url=final_url, 
                     content=content, 
                     content_type=content_type, 
                     node_id=node_id, 
