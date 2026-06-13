@@ -36,7 +36,17 @@ EXCLUDED_URL_PATTERNS = [
 
 def is_junk_url(url: str) -> bool:
     """Détermine si une URL est du bruit (tracking, fonts, analytics, etc.)"""
+    # Règle anti-espaces : si l'URL contient un espace brut (non encodé), c'est une erreur de saisie
+    if ' ' in url:
+        return True
+        
     url_lower = url.lower()
+    
+    # Règle anti-localhost (évite les Connection Refused à l'intérieur du conteneur Docker)
+    parsed_netloc = urlparse(url_lower).netloc
+    if parsed_netloc in ['localhost', '127.0.0.1'] or parsed_netloc.startswith('localhost:') or parsed_netloc.startswith('127.0.0.1:'):
+        return True
+
     # Vérifier les patterns exclus
     for pattern in EXCLUDED_URL_PATTERNS:
         if pattern in url_lower:
@@ -108,6 +118,13 @@ class DynamicFetcher:
                 last_error = e
                 self.logger.warning(f"Attempt {attempt+1}/{current_retries} failed for {url} via Requests (HTTPError): {e}")
             except requests.exceptions.RequestException as e:
+                error_str = str(e)
+                # Fail Fast : Si le serveur n'existe plus ou que le réseau est coupé vers cette IP, 
+                # on abandonne immédiatement pour économiser 3 retries et 1 fallback Playwright.
+                if "NameResolutionError" in error_str or "Network is unreachable" in error_str:
+                    self.logger.warning(f"Fast failing on deep network error for {url}: {error_str}")
+                    return None, None, None
+                    
                 last_error = e
                 self.logger.warning(f"Attempt {attempt+1}/{current_retries} failed for {url} via Requests: {e}")
                 
