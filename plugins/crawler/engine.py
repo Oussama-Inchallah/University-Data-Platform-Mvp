@@ -79,9 +79,10 @@ class DynamicFetcher:
         headers = {"User-Agent": self.user_agent}
         last_error = None
         
-        # Ajustement drastique pour ne pas perdre de temps sur les liens externes/morts (ex: ent.univh2c.ma)
+        # Ajustement du timeout pour les liens externes, mais on garde les retries
+        # car le Fail Fast arrêtera de toute façon les domaines morts dès la 1ère tentative.
         current_timeout = self.request_timeout if is_allowed_domain else 10
-        current_retries = self.retry_count if is_allowed_domain else 1
+        current_retries = self.retry_count
         
         for attempt in range(current_retries):
             try:
