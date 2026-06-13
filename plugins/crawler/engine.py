@@ -36,8 +36,8 @@ EXCLUDED_URL_PATTERNS = [
 
 def is_junk_url(url: str) -> bool:
     """Détermine si une URL est du bruit (tracking, fonts, analytics, etc.)"""
-    # Règle anti-espaces : si l'URL contient un espace brut (non encodé), c'est une erreur de saisie
-    if ' ' in url:
+    # Règle anti-phrase : si l'URL contient plusieurs espaces bruts, c'est probablement une phrase copiée par erreur.
+    if url.count(' ') > 2 or ' http' in url:
         return True
         
     url_lower = url.lower()
@@ -251,6 +251,10 @@ class GenericCrawler:
         def process_url(tag_url, is_resource=False):
             if not tag_url or tag_url.startswith(('data:', 'javascript:', 'mailto:', 'tel:')): 
                 return
+                
+            # Nettoyer l'URL : on encode les espaces isolés (ex: "document final.pdf" -> "document%20final.pdf")
+            # pour éviter que 'requests' ne plante (InvalidURL / Failed to parse).
+            tag_url = tag_url.strip().replace(' ', '%20')
                 
             # Les applications SPA modernes (React, Angular, Vue) utilisent souvent des fragments (#) 
             # pour la navigation (ex: annonce.html#1181). Il ne faut surtout pas supprimer le '#'.
