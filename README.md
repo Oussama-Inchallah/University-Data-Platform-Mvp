@@ -23,11 +23,9 @@ Projet MVP de Data Engineering permettant l'ingestion, le traitement et l'analys
 
 3. **Démarrer l'infrastructure (Airflow, MinIO, Postgres, Redis) :**
 
-   Nous utilisons des profils Docker compose pour gérer les différentes couches de la plateforme. Pour lancer l'infrastructure d'ingestion complète :
-
    ```bash
-   # Lancer l'infrastructure avec la couche d'ingestion
-   docker compose --profile ingestion up -d --build
+   # Lancer linfrastructure globale
+   docker compose up -d --build
    ```
 
    Airflow sera disponible sur `localhost:8080` et MinIO sur `localhost:9001`.
@@ -49,15 +47,15 @@ University-Data-Platform-Mvp/
 │   └── metabase_dashboards/     # Configurations de tableaux de bord Metabase
 │
 ├── dags/                   # Orchestration Centrale (Airflow)
-│   ├── ingestion/          # DAGs de crawling et de collecte d'API
-│   ├── processing/         # Futurs DAGs pour déclencher Hudi/Spark
-│   └── serving/            # Futurs DAGs pour l'exportation vers Elastic/Metabase
-│
-├── plugins/                # Code Custom Airflow
-│   └── crawler/            # Le moteur Python Crawler Universel
+│   ├── dag_fsac.py         # Pipeline End-to-End pour FSAC
+│   ├── dag_estc.py         # Pipeline End-to-End pour ESTC
+│   └── ...                 # Un DAG par source
 │
 ├── src/                    # Logique Métier Indépendante (Agnostique d'Airflow)
-│   ├── processing/         # Scripts PySpark (ex: hudi_utils.py)
+│   ├── ingestion/          # Logique d'extraction (Crawler, APIs)
+│   │   ├── crawler/        # Le moteur Python Crawler Universel
+│   │   └── openalex/       # Connecteur API OpenAlex
+│   ├── processing/         # Scripts PySpark (Couche Silver)
 │   ├── common/             # Utilitaires partagés
 │   └── serving/            # Scripts de chargement de données finales
 │
