@@ -1,20 +1,14 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
-import sys
-import os
-
-# Ensure the plugins directory is in the path
-sys.path.insert(0, '/opt/airflow/plugins')
-
-from crawler.engine import GenericCrawler
+from src.ingestion.crawler.engine import GenericCrawler
 
 # ==========================================
 # CONFIGURATION SPÉCIFIQUE À L'UNIVERSITÉ
 # ==========================================
-UNIVERSITY_ID = "FSAC"
-SEED_URL = "https://fsac.univh2c.ma"
-ALLOWED_DOMAINS = ["fsac.univh2c.ma"]
+UNIVERSITY_ID = "FPL"
+SEED_URL = "https://fpl.ac.ma/site/"
+ALLOWED_DOMAINS = ["fpl.ac.ma", "www.fpl.ac.ma"]
 MAX_DEPTH = 3
 CRAWL_DELAY = 1.0
 
@@ -42,7 +36,6 @@ with DAG(
     catchup=False,
     tags=["ingestion", "raw", UNIVERSITY_ID]
 ) as dag:
-
     crawl_task = PythonOperator(
         task_id="extract_and_route_to_minio",
         python_callable=run_ingestion_pipeline,

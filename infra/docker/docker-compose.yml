@@ -20,7 +20,9 @@ x-airflow-common:
     AIRFLOW__LOGGING__REMOTE_LOGGING: 'true'
     AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 's3://raw-logs/airflow-logs'
     AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: 'minio_s3_log'
+    PYTHONPATH: /opt/airflow
   volumes:
+    - ../../src:/opt/airflow/src
     - ../../dags:/opt/airflow/dags
     - ../../plugins:/opt/airflow/plugins
     - ./airflow-logs:/opt/airflow/logs

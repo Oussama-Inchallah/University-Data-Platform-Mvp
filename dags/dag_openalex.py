@@ -1,7 +1,7 @@
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.decorators import task
-from openalex.fetcher import OpenAlexFetcher
+from src.ingestion.openalex.fetcher import OpenAlexFetcher
 
 # ==========================================
 # CONFIGURATION CENTRALISÉE OPENALEX

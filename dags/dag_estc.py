@@ -1,20 +1,14 @@
 from airflow import DAG
 from airflow.operators.python import PythonOperator
 from datetime import datetime, timedelta
-import sys
-import os
-
-# Ensure the plugins directory is in the path
-sys.path.insert(0, '/opt/airflow/plugins')
-
-from crawler.engine import GenericCrawler
+from src.ingestion.crawler.engine import GenericCrawler
 
 # ==========================================
 # CONFIGURATION SPÉCIFIQUE À L'UNIVERSITÉ
 # ==========================================
-UNIVERSITY_ID = "UH2C"
-SEED_URL = "https://www.univh2c.ma/"
-ALLOWED_DOMAINS = ["univh2c.ma"]
+UNIVERSITY_ID = "ESTC"
+SEED_URL = "https://www.est-uh2c.ac.ma/"
+ALLOWED_DOMAINS = ["est-uh2c.ac.ma"]
 MAX_DEPTH = 3
 CRAWL_DELAY = 1.0
 

@@ -2,7 +2,7 @@ import logging
 import time
 import requests
 from urllib.parse import urlencode
-from crawler.storage import StorageRouter
+from src.ingestion.crawler.storage import StorageRouter
 
 class OpenAlexFetcher:
     """

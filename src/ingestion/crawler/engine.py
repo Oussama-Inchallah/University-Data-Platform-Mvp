@@ -6,7 +6,7 @@ import urllib3
 from bs4 import BeautifulSoup
 from collections import deque
 from urllib.parse import urljoin, urlparse
-from crawler.storage import StorageRouter
+from src.ingestion.crawler.storage import StorageRouter
 from playwright.sync_api import sync_playwright
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
