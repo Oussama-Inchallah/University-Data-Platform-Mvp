@@ -59,7 +59,6 @@ services:
 
   airflow-webserver:
     <<: *airflow-common
-    profiles: ["ingestion"]
     command: webserver
     ports:
       - "8080:8080"
@@ -75,7 +74,6 @@ services:
 
   airflow-scheduler:
     <<: *airflow-common
-    profiles: ["ingestion"]
     command: scheduler
     restart: always
     depends_on:
@@ -85,7 +83,6 @@ services:
 
   airflow-worker:
     <<: *airflow-common
-    profiles: ["ingestion"]
     command: celery worker
     restart: always
     depends_on:
@@ -95,7 +92,6 @@ services:
 
   airflow-init:
     <<: *airflow-common
-    profiles: ["ingestion"]
     command: version
     environment:
       <<: *airflow-common-env
