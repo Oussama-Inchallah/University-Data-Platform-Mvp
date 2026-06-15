@@ -51,7 +51,7 @@ class StorageRouter:
             ext = mimetypes.guess_extension(content_type.split(';')[0]) or ""
             
             if 'text/html' in content_type:
-                suffix = "-index.html"
+                suffix = ".html"
             else:
                 # Si ce n'est pas du HTML, on utilise l'extension devinée (ex: .jpg, .pdf)
                 # Si mimetypes ne trouve rien et que l'URL n'a pas d'extension, on ajoute juste le suffixe vide.
@@ -62,24 +62,18 @@ class StorageRouter:
             else:
                 file_name = f"index{suffix}" if suffix else "unknown_file"
             
-        # Si l'URL contient des paramètres de requête (ex: API Supabase ?id=123)
-        # ou un fragment (#) utilisé par les SPAs (ex: annonce.html#1181),
-        # il faut les inclure dans le nom du fichier pour éviter l'écrasement (Data Loss).
-        dynamic_part = ""
-        if parsed_url.query:
-            dynamic_part += parsed_url.query
-        if parsed_url.fragment:
-            dynamic_part += parsed_url.fragment
-            
-        if dynamic_part:
-            import hashlib
-            query_hash = hashlib.md5(dynamic_part.encode('utf-8')).hexdigest()[:8]
-            if '.' in file_name:
-                base_name, ext = file_name.rsplit('.', 1)
-                file_name = f"{base_name}_{query_hash}.{ext}"
-            else:
-                file_name = f"{file_name}_{query_hash}"
-                
+        # Ajout systématique d'un petit hash (10 caractères) basé sur l'URL complète.
+        # Cela garantit qu'aucune page n'écrase une autre, même si elles ont le même nom 
+        # (ex: bd2c.fsac.ma/ et isi.fsac.ma/ donneront index-index_a1b2c3d4e5.html)
+        import hashlib
+        url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()[:10]
+        
+        if '.' in file_name:
+            base_name, ext = file_name.rsplit('.', 1)
+            file_name = f"{base_name}_{url_hash}.{ext}"
+        else:
+            file_name = f"{file_name}_{url_hash}"
+
         # Si c'est du HTML et qu'il n'y a pas d'extension, on s'assure qu'il finit par .html
         if 'text/html' in content_type and not file_name.endswith('.html'):
             file_name += ".html"
