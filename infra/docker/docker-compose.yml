@@ -19,10 +19,10 @@ x-airflow-common: &airflow-common
     AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 's3://raw-logs/airflow-logs'
     AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: 'minio_s3_log'
     PYTHONPATH: /opt/airflow
+    AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
   volumes:
     - ../../src:/opt/airflow/src
     - ../../dags:/opt/airflow/dags
-    - ../../plugins:/opt/airflow/plugins
     - ./airflow-logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-common-depends-on
@@ -117,7 +117,7 @@ services:
     depends_on:
       - minio
     entrypoint: >
-      /bin/sh -c " echo 'Waiting for MinIO to start...'; until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}); do sleep 2; done; echo 'Creating buckets...'; /usr/bin/mc mb myminio/raw-web-html --ignore-existing; /usr/bin/mc mb myminio/raw-documents --ignore-existing; /usr/bin/mc mb myminio/raw-images --ignore-existing; /usr/bin/mc mb myminio/raw-json --ignore-existing; /usr/bin/mc mb myminio/raw-logs --ignore-existing; echo 'Buckets created successfully.'; exit 0; "
+      /bin/sh -c " echo 'Waiting for MinIO to start...'; until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}); do sleep 2; done; echo 'Creating buckets...'; /usr/bin/mc mb myminio/raw-web-html --ignore-existing; /usr/bin/mc mb myminio/raw-documents --ignore-existing; /usr/bin/mc mb myminio/raw-images --ignore-existing; /usr/bin/mc mb myminio/raw-json --ignore-existing; /usr/bin/mc mb myminio/raw-logs --ignore-existing; /usr/bin/mc mb myminio/curated-zone --ignore-existing; echo 'Buckets created successfully.'; exit 0; "
 
   spark-master:
     build:
@@ -169,7 +169,7 @@ services:
       - ../../src/processing/jobs:/opt/spark/jobs
 
   hive-metastore-db:
-    image: postgres:14-alpine
+    image: postgres:15-alpine
     environment:
       POSTGRES_USER: hive
       POSTGRES_PASSWORD: hivepassword
