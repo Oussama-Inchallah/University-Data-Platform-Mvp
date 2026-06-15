@@ -1,10 +1,8 @@
-x-airflow-common:
-  &airflow-common
+x-airflow-common: &airflow-common
   build:
     context: ../../
     dockerfile: infra/docker/Dockerfile
-  environment:
-    &airflow-common-env
+  environment: &airflow-common-env
     AIRFLOW__CORE__EXECUTOR: CeleryExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://airflow:airflow@postgres/airflow
@@ -27,8 +25,7 @@ x-airflow-common:
     - ../../plugins:/opt/airflow/plugins
     - ./airflow-logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
-  depends_on:
-    &airflow-common-depends-on
+  depends_on: &airflow-common-depends-on
     redis:
       condition: service_healthy
     postgres:
@@ -44,7 +41,7 @@ services:
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "airflow"]
+      test: [ "CMD", "pg_isready", "-U", "airflow" ]
       interval: 10s
       retries: 5
     restart: always
@@ -52,7 +49,7 @@ services:
   redis:
     image: redis:latest
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: [ "CMD", "redis-cli", "ping" ]
       interval: 10s
       retries: 5
     restart: always
@@ -63,7 +60,7 @@ services:
     ports:
       - "8080:8080"
     healthcheck:
-      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      test: [ "CMD", "curl", "--fail", "http://localhost:8080/health" ]
       interval: 30s
       retries: 5
     restart: always
@@ -120,19 +117,79 @@ services:
     depends_on:
       - minio
     entrypoint: >
-      /bin/sh -c "
-      echo 'Waiting for MinIO to start...';
-      until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}); do sleep 2; done;
-      echo 'Creating buckets...';
-      /usr/bin/mc mb myminio/raw-web-html --ignore-existing;
-      /usr/bin/mc mb myminio/raw-documents --ignore-existing;
-      /usr/bin/mc mb myminio/raw-images --ignore-existing;
-      /usr/bin/mc mb myminio/raw-json --ignore-existing;
-      /usr/bin/mc mb myminio/raw-logs --ignore-existing;
-      echo 'Buckets created successfully.';
-      exit 0;
-      "
+      /bin/sh -c " echo 'Waiting for MinIO to start...'; until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}); do sleep 2; done; echo 'Creating buckets...'; /usr/bin/mc mb myminio/raw-web-html --ignore-existing; /usr/bin/mc mb myminio/raw-documents --ignore-existing; /usr/bin/mc mb myminio/raw-images --ignore-existing; /usr/bin/mc mb myminio/raw-json --ignore-existing; /usr/bin/mc mb myminio/raw-logs --ignore-existing; echo 'Buckets created successfully.'; exit 0; "
+
+  spark-master:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.spark
+    container_name: spark-master
+    command: >
+      bash -c "/opt/spark/sbin/start-master.sh && tail -f /opt/spark/logs/spark--org.apache.spark.deploy.master*.out"
+    environment:
+      - SPARK_MODE=master
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - AWS_ENDPOINT_URL=http://minio:9000
+    ports:
+      - "9090:8080"
+      - "7077:7077"
+    volumes:
+      - ../../src/processing/jobs:/opt/spark/jobs
+
+  spark-worker:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.spark
+    deploy:
+      replicas: 2
+    command: >
+      bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077 --cores 2 --memory 2g && tail -f /opt/spark/logs/spark--org.apache.spark.deploy.worker*.out"
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+      - SPARK_RPC_AUTHENTICATION_ENABLED=no
+      - SPARK_RPC_ENCRYPTION_ENABLED=no
+      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
+      - SPARK_SSL_ENABLED=no
+      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
+      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
+      - AWS_ENDPOINT_URL=http://minio:9000
+    ports:
+      - "8081-8082:8081"
+    depends_on:
+      - spark-master
+    volumes:
+      - ../../src/processing/jobs:/opt/spark/jobs
+
+  hive-metastore-db:
+    image: postgres:14-alpine
+    environment:
+      POSTGRES_USER: hive
+      POSTGRES_PASSWORD: hivepassword
+      POSTGRES_DB: metastore_db
+    volumes:
+      - hive-metastore-data:/var/lib/postgresql/data
+    restart: always
+
+  hive-metastore:
+    image: apache/hive:3.1.3
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-metastore-db:5432/metastore_db -Djavax.jdo.option.ConnectionUserName=hive -Djavax.jdo.option.ConnectionPassword=hivepassword"
+    ports:
+      - "9083:9083"
+    depends_on:
+      - hive-metastore-db
 
 volumes:
   postgres-data:
   minio-data:
+  hive-metastore-data:
