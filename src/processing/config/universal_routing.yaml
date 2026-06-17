@@ -1,0 +1,31 @@
+# src/processing/config/universal_routing.yaml
+input_bucket: "raw-web-html"
+
+entities:
+  # Règle pour le catalogue de cours
+  - target_table: "course_catalog"
+    url_pattern: ".*formations.*|.*filieres.*|.*departements.*|.*page=departements.*|.*page=formations.*|.*cours.*|.*formation.*|.*initiale.*|.*continue.*|.*master.*|.*mst.*|.*lst.*|.*emploisdutemps.*|.*inscription.*|.*preinscription.*|.*candidature.*|.*resultat.*|.*scholar.*"
+
+  # Règle pour les profils des professeurs
+  - target_table: "faculty_profiles"
+    url_pattern: ".*professeurs.*|.*enseignants.*|.*annuaire.*|.*enseignant.*|.*faculty.*|.*profile.*"
+
+  # Règle pour les profils externes d'étudiants (LinkedIn, Portfolios, etc. si crawlés)
+  - target_table: "students_external_profiles"
+    url_pattern: ".*etudiants.*|.*alumni.*|.*laureats.*|.*student.*|.*vie.*|.*estudiantine.*|.*activites.*|.*forum.*|.*entreprise.*|.*carriere.*|.*entrepreneurship.*"
+
+  # Règle pour les actualités
+  - target_table: "university_news"
+    url_pattern: ".*actualites.*|.*news.*|.*evenements.*|.*actu.*|.*annonce.*|.*actus.*|.*event.*|.*recrut.*|.*avis.*|.*presse.*|.*communication.*|.*organigramme.*|.*contact.*|.*presentation.*|.*missions.*|.*conseil.*|.*help.*"
+
+  # Règle pour la recherche
+  - target_table: "research_publications"
+    url_pattern: ".*recherche.*|.*publications.*|.*laboratoires.*|.*theses.*|.*publication.*|.*research.*|.*page=recherche.*|.*doi.*|.*antiplagiat.*"
+
+  # Règle pour le registre documentaire (PDFs, formulaires, etc.)
+  - target_table: "documents_registry"
+    url_pattern: ".*/documents/.*|.*/telechargements/.*|.*\\.pdf"
+
+  # Règle par défaut (Contenu non classifié)
+  - target_table: "unclassified_contents"
+    url_pattern: ".*"

@@ -139,7 +139,7 @@ services:
       - "9090:8080"
       - "7077:7077"
     volumes:
-      - ../../src/processing/jobs:/opt/spark/jobs
+      - ../../src:/app
 
   spark-worker:
     build:
@@ -166,7 +166,7 @@ services:
     depends_on:
       - spark-master
     volumes:
-      - ../../src/processing/jobs:/opt/spark/jobs
+      - ../../src:/app
 
   hive-metastore-db:
     image: postgres:15-alpine
