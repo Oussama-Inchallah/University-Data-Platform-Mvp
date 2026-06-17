@@ -40,3 +40,4 @@ derby.log
 
 # Fichiers locaux persos
 docs/*.md
+*.txt
