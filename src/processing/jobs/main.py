@@ -8,6 +8,7 @@ try:
     from processing.core.config_loader import ConfigLoader
     from processing.core.router import DynamicRouter
     from processing.core.parsers.html_parser import parse_html_udf
+    from processing.core.parsers.document_parser import parse_document_udf
     from processing.core.transformers.data_cleaner import DataCleaner, detect_language_udf
     from processing.core.writers.hudi_writer import HudiWriter
     from processing.core.writers.es_writer import ElasticsearchWriter
@@ -18,6 +19,7 @@ except ImportError:
     from processing.core.config_loader import ConfigLoader
     from processing.core.router import DynamicRouter
     from processing.core.parsers.html_parser import parse_html_udf
+    from processing.core.parsers.document_parser import parse_document_udf
     from processing.core.transformers.data_cleaner import DataCleaner, detect_language_udf
     from processing.core.writers.hudi_writer import HudiWriter
     from processing.core.writers.es_writer import ElasticsearchWriter
@@ -40,6 +42,7 @@ def main():
     parser.add_argument("--config", required=True, help="Path to the university YAML config file")
     parser.add_argument("--execution_date", required=True, help="Airflow execution date (YYYY-MM-DD) for incremental load")
     parser.add_argument("--source_system", required=True, help="Source system identifier (e.g., FSAC, FSTM)")
+    parser.add_argument("--domain_pattern", required=False, help="Domain pattern for MinIO paths (e.g. *fs.ucd.ac.ma*)")
     args = parser.parse_args()
 
     logger.info(f"Starting processing job with config={args.config}, date={args.execution_date}, source_system={args.source_system}")
@@ -53,38 +56,99 @@ def main():
     
     # 3. Lecture depuis MinIO (Incremental load basé sur execution_date)
     try:
-        year, month, day = args.execution_date.split("-")
-        domain_pattern = f"*{source_system.lower()}*"
-        base_path_html = f"s3a://{loader.input_bucket}/{domain_pattern}/year={year}/month={month}/day={day}/*.html"
-        base_path_json = f"s3a://{loader.input_bucket}/{domain_pattern}/year={year}/month={month}/day={day}/*_metadata.json"
+        execution_date = args.execution_date
+        if args.domain_pattern:
+            domain_pattern = args.domain_pattern
+        else:
+            domain_pattern = f"*{source_system.lower()}*"
+        
+        # --- Traitement HTML ---
+        # On lit tous les fichiers qui ne sont pas des .json dans le dossier du jour
+        if execution_date.lower() == "all":
+            base_path_html = f"s3a://raw-web-html/{domain_pattern}/year=*/month=*/day=*/*"
+            base_path_json_html = f"s3a://raw-web-html/{domain_pattern}/year=*/month=*/day=*/*_metadata.json"
+        else:
+            year, month, day = execution_date.split("-")
+            base_path_html = f"s3a://raw-web-html/{domain_pattern}/year={year}/month={month}/day={day}/*"
+            base_path_json_html = f"s3a://raw-web-html/{domain_pattern}/year={year}/month={month}/day={day}/*_metadata.json"
         
         logger.info(f"Reading HTML files from {base_path_html}")
-        # Lecture du contenu des fichiers (RDD converti en DataFrame)
-        rdd_html = spark.sparkContext.wholeTextFiles(base_path_html)
-        if rdd_html.isEmpty():
-            logger.error("No HTML files found for this date.")
+        df_html_normalized = None
+        try:
+            rdd_html = spark.sparkContext.wholeTextFiles(base_path_html)
+            if not rdd_html.isEmpty():
+                df_html = rdd_html.toDF(["raw_path", "content"])
+                df_meta_html = spark.read.option("multiLine", "true").json(base_path_json_html)
+                df_meta_html = df_meta_html.withColumn("raw_path_meta", F.concat(F.lit("s3a://"), F.col("storage_bucket"), F.lit("/"), F.col("storage_path")))
+                df_raw_html = df_html.join(df_meta_html, df_html.raw_path == df_meta_html.raw_path_meta, how="inner")
+                
+                df_html_normalized = df_raw_html \
+                    .withColumn("parsed_html", parse_html_udf(F.col("content"))) \
+                    .withColumn("title", F.col("parsed_html.title")) \
+                    .withColumn("normalized_text", F.col("parsed_html.text")) \
+                    .drop("parsed_html", "content")
+            else:
+                logger.warning("No HTML files found for this date.")
+        except Exception as e:
+            logger.warning(f"Could not read HTML files (might not exist yet): {e}")
+
+        # --- Traitement Documents (PDF, DOCX, etc.) ---
+        # On lit tous les fichiers qui ne sont pas des .html ni des .json dans raw-documents
+        if args.execution_date.lower() == "all":
+            base_path_docs = f"s3a://raw-documents/{domain_pattern}/year=*/month=*/day=*/*"
+            base_path_json_docs = f"s3a://raw-documents/{domain_pattern}/year=*/month=*/day=*/*_metadata.json"
+        else:
+            year, month, day = args.execution_date.split("-")
+            base_path_docs = f"s3a://raw-documents/{domain_pattern}/year={year}/month={month}/day={day}/*"
+            base_path_json_docs = f"s3a://raw-documents/{domain_pattern}/year={year}/month={month}/day={day}/*_metadata.json"
+        
+        logger.info(f"Reading Document files from {base_path_docs}")
+        df_docs_normalized = None
+        try:
+            rdd_docs = spark.sparkContext.binaryFiles(base_path_docs)
+            # binaryFiles renvoie (path, bytearray), nous voulons l'appliquer à Tika
+            if not rdd_docs.isEmpty():
+                df_docs = rdd_docs.toDF(["raw_path", "content_binary"])
+                # Filtrer les json qui auraient pu être attrapés par le glob "*"
+                df_docs = df_docs.filter(~F.col("raw_path").endswith(".json"))
+                
+                df_meta_docs = spark.read.option("multiLine", "true").json(base_path_json_docs)
+                df_meta_docs = df_meta_docs.withColumn("raw_path_meta", F.concat(F.lit("s3a://"), F.col("storage_bucket"), F.lit("/"), F.col("storage_path")))
+                df_raw_docs = df_docs.join(df_meta_docs, df_docs.raw_path == df_meta_docs.raw_path_meta, how="inner")
+                
+                df_docs_normalized = df_raw_docs \
+                    .withColumn("parsed_doc", parse_document_udf(F.col("content_binary"))) \
+                    .withColumn("title_tika", F.col("parsed_doc.title")) \
+                    .withColumn("normalized_text", F.col("parsed_doc.text")) \
+                    .drop("parsed_doc", "content_binary")
+                
+                # Si le titre Tika est vide, on garde le title d'origine (du json) s'il existe, sinon on prend celui de Tika
+                if "title" in df_docs_normalized.columns:
+                    df_docs_normalized = df_docs_normalized.withColumn("title", 
+                        F.when(F.col("title_tika") != "", F.col("title_tika")).otherwise(F.col("title"))
+                    ).drop("title_tika")
+                else:
+                    df_docs_normalized = df_docs_normalized.withColumnRenamed("title_tika", "title")
+            else:
+                logger.info("No Document files found for this date.")
+        except Exception as e:
+            logger.warning(f"Could not read documents from raw-documents (might not exist yet): {e}")
+
+        # --- Union des DataFrames ---
+        df_normalized_union = None
+        if df_html_normalized is not None and df_docs_normalized is not None:
+            # On s'assure d'avoir les mêmes colonnes avant l'union
+            df_normalized_union = df_html_normalized.select(*df_docs_normalized.columns).unionByName(df_docs_normalized, allowMissingColumns=True)
+        elif df_html_normalized is not None:
+            df_normalized_union = df_html_normalized
+        elif df_docs_normalized is not None:
+            df_normalized_union = df_docs_normalized
+        
+        if df_normalized_union is None:
+            logger.error("No data (HTML or Docs) to process.")
             return
-            
-        df_html = rdd_html.toDF(["raw_path", "content"])
-        
-        logger.info(f"Reading Metadata JSON from {base_path_json}")
-        df_meta = spark.read.option("multiLine", "true").json(base_path_json)
-        
-        # Reconstruction du raw_path s3a pour la jointure
-        df_meta = df_meta.withColumn(
-            "raw_path_meta", 
-            F.concat(F.lit("s3a://"), F.col("storage_bucket"), F.lit("/"), F.col("storage_path"))
-        )
-        
-        # Jointure pour rassembler le contenu HTML et ses métadonnées (URL, timestamps...)
-        df_raw = df_html.join(df_meta, df_html.raw_path == df_meta.raw_path_meta, how="inner")
-        
-        raw_count = df_raw.count()
-        logger.info(f"===> DEBUG: Rows after join = {raw_count}")
-        if raw_count == 0:
-            logger.info("===> DEBUG: df_html and df_meta did not join. Here is a sample of paths:")
-            df_html.select("raw_path").show(3, truncate=False)
-            df_meta.select("raw_path_meta", "source_url").show(3, truncate=False)
+
+        df_raw = df_normalized_union
         
     except Exception as e:
         logger.error(f"Error reading from MinIO: {e}")
@@ -95,24 +159,18 @@ def main():
     routed_count = df_routed.count()
     logger.info(f"===> DEBUG: Rows after routing = {routed_count}")
     
-    # 5. Parsers & Normalisation (Application du Schéma Commun)
-    df_normalized = df_routed \
+    # 5. Normalisation Commune & Hachage
+    df_enriched = df_routed \
         .withColumn("source_system", F.lit(source_system)) \
         .withColumn("source_url", F.col("source_url")) \
         .withColumn("crawl_timestamp", F.col("crawl_timestamp").cast("timestamp")) \
         .withColumn("ingestion_timestamp", F.current_timestamp()) \
         .withColumn("is_deleted", F.lit(False)) \
-        .withColumn("parsed_html", parse_html_udf(F.col("content"))) \
-        .withColumn("title", F.col("parsed_html.title")) \
-        .withColumn("normalized_text", F.col("parsed_html.text")) \
-        .drop("parsed_html") \
-        .withColumn("language", detect_language_udf(F.col("normalized_text")))
-    # 6. Nettoyage et Hachage
-    df_enriched = df_normalized \
+        .withColumn("language", detect_language_udf(F.col("normalized_text"))) \
         .withColumn("record_id", DataCleaner.generate_record_id("source_system", "source_url")) \
         .withColumn("content_hash", DataCleaner.generate_content_hash("normalized_text")) \
         .withColumn("business_timestamp", F.col("crawl_timestamp")) \
-        .drop("content", "raw_path", "raw_path_meta") # OPTIMISATION : Suppression du HTML brut
+        .drop("raw_path", "raw_path_meta") # OPTIMISATION : Suppression du chemin brut
         
     # 6. Écriture Hudi & ES (Ventilation Dynamique)
     # On cache le DataFrame enrichi en mémoire pour éviter de le recalculer pour chaque table
@@ -148,13 +206,20 @@ def main():
             lines.append(f"+{'-'*35}+{'-'*12}+")
             for row in rows:
                 k = str(row[0]) if row[0] is not None else "NULL"
+                if k == "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+                    k = "docx"
+                elif k == "application/pdf":
+                    k = "pdf"
+                elif k == "application/msword":
+                    k = "doc"
+                
                 v = str(row[1])
                 lines.append(f"| {k:<33} | {v:<10} |")
             lines.append(f"+{'-'*35}+{'-'*12}+")
             return "\n" + "\n".join(lines)
 
-        content_rows = df_meta.groupBy("content_type").count().collect()
-        status_rows = df_meta.groupBy("http_status").count().collect()
+        content_rows = df_raw.groupBy("content_type").count().collect()
+        status_rows = df_raw.groupBy("http_status").count().collect()
         hudi_rows = df_enriched.groupBy("target_table").count().collect()
         total_records = df_enriched.count()
 
