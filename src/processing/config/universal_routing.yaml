@@ -2,29 +2,29 @@
 input_bucket: "raw-web-html"
 
 entities:
-  # Règle pour le catalogue de cours
+  # Règle pour le catalogue de cours (Pédagogie)
   - target_table: "course_catalog"
-    url_pattern: ".*formations.*|.*filieres.*|.*departements.*|.*page=departements.*|.*page=formations.*|.*cours.*|.*formation.*|.*initiale.*|.*continue.*|.*master.*|.*mst.*|.*lst.*|.*emploisdutemps.*|.*inscription.*|.*preinscription.*|.*candidature.*|.*resultat.*|.*scholar.*"
+    url_pattern: "(?i).*formations?|.*filieres?|.*departements?|.*departments?|.*cours?|.*modules?|.*initiales?|.*continues?|.*masters?|.*mst|.*lst|.*licences?|.*bachelors?|.*emplois?.*temps|.*schedules?|.*inscriptions?|.*enrollments?|.*registrations?|.*preinscriptions?|.*candidatures?|.*applications?|.*resultats?|.*results?|.*scholar.*|.*moodle.*|.*examens?|.*exams?|.*تكوين.*|.*مسلك.*|.*شعبة.*|.*درس.*|.*وحدة.*|.*أساسي.*|.*مستمر.*|.*ماستر.*|.*إجازة.*|.*تسجيل.*|.*نتيجة.*|.*جدول.*|.*أوقات.*|.*امتحان.*"
 
   # Règle pour les profils des professeurs
   - target_table: "faculty_profiles"
-    url_pattern: ".*professeurs.*|.*enseignants.*|.*annuaire.*|.*enseignant.*|.*faculty.*|.*profile.*"
+    url_pattern: "(?i).*professeurs?|.*professors?|.*enseignants?|.*teachers?|.*annuaires?|.*directories?|.*staff|.*profiles?|.*contacts?|.*abouts?|.*أستاذ.*|.*مدرس.*|.*دليل.*|.*موظف.*|.*شخصي.*|.*محاضر.*|.*مفتش.*"
 
-  # Règle pour les profils externes d'étudiants (LinkedIn, Portfolios, etc. si crawlés)
+  # Règle pour les profils d'étudiants
   - target_table: "students_external_profiles"
-    url_pattern: ".*etudiants.*|.*alumni.*|.*laureats.*|.*student.*|.*vie.*|.*estudiantine.*|.*activites.*|.*forum.*|.*entreprise.*|.*carriere.*|.*entrepreneurship.*"
+    url_pattern: "(?i).*etudiants?|.*students?|.*alumnis?|.*laureats?|.*graduates?|.*vie.*|.*life.*|.*estudiantine.*|.*activites?|.*activities?|.*forums?|.*entreprises?|.*enterprises?|.*carrieres?|.*careers?|.*entrepreneurship.*|.*services?|.*espace_etu.*|.*طالب.*|.*خريج.*|.*حياة.*|.*طلابية.*|.*نشاط.*|.*منتدى.*|.*مقاولة.*|.*مهنة.*|.*خدمات.*"
 
   # Règle pour les actualités
   - target_table: "university_news"
-    url_pattern: ".*actualites.*|.*news.*|.*evenements.*|.*actu.*|.*annonce.*|.*actus.*|.*event.*|.*recrut.*|.*avis.*|.*presse.*|.*communication.*|.*organigramme.*|.*contact.*|.*presentation.*|.*missions.*|.*conseil.*|.*help.*"
+    url_pattern: "(?i).*actualites?|.*news|.*evenements?|.*events?|.*actus?|.*annonces?|.*announcements?|.*recrut.*|.*avis|.*notices?|.*presse|.*press|.*communications?|.*organigrammes?|.*presentations?|.*missions?|.*conseils?|.*councils?|.*helps?|.*partenariats?|.*partnerships?|.*testimonials?|.*index|.*accueil|.*home|.*خبر.*|.*إعلان.*|.*إخبار.*|.*حدث.*|.*صحافة.*|.*تواصل.*|.*تقديم.*|.*مهمة.*|.*مجلس.*|.*شراكة.*|.*استقبال.*|.*توظيف.*|.*مباراة.*|.*النتيجة.*|.*لائحة.*|.*المترشحين.*|.*دورة.*|.*مباريات.*"
 
   # Règle pour la recherche
   - target_table: "research_publications"
-    url_pattern: ".*recherche.*|.*publications.*|.*laboratoires.*|.*theses.*|.*publication.*|.*research.*|.*page=recherche.*|.*doi.*|.*antiplagiat.*"
+    url_pattern: "(?i).*recherche.*|.*research.*|.*publications?|.*laboratoires?|.*laboratories?|.*theses?|.*thesis.*|.*cedoc.*|.*doi.*|.*antiplagiat.*|.*plagiarism.*|.*soutenances?|.*defenses?|.*doctorats?|.*doctorates?|.*بحث.*|.*منشور.*|.*مختبر.*|.*أطروحة.*|.*مناقشة.*|.*دكتوراه.*|.*انتحال.*"
 
   # Règle pour le registre documentaire (PDFs, formulaires, etc.)
   - target_table: "documents_registry"
-    url_pattern: ".*/documents/.*|.*/telechargements/.*|.*\\.pdf"
+    url_pattern: "(?i).*/documents?/.*|.*/telechargements?/.*|.*/downloads?/.*|.*\\.pdf"
 
   # Règle par défaut (Contenu non classifié)
   - target_table: "unclassified_contents"
