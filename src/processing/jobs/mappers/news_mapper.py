@@ -30,10 +30,12 @@ def map_html_to_hudi_schema(df):
     # 3. Categorize based on URL logic
     categorized_df = mapped_df.withColumn(
         "target_table",
-        when(col("source_url").rlike("(?i)actualites|news|event|annonce|agenda|recrut|events|partenariat|evenements|offre|jobs|stage|fetes|manifestations|journees|portes_ouvertes|manifestation"), "university_news")
-        .when(col("source_url").rlike("(?i)enseignants|prof|personnel|dean"), "faculty_profiles")
-        .when(col("source_url").rlike("(?i)formation|master|cursus|filiere|licence|doctorat|diplome"), "course_catalog")
-        .when(col("source_url").rlike("(?i)recherche|publications|laboratoire|phd"), "research_publications")
+        # s? = matches with or without trailing 's'
+        when(col("source_url").rlike("(?i)(.*formations?|.*filieres?|.*departements?|.*departments?|.*cours?|.*modules?|.*initiales?|.*continues?|.*masters?|.*mst|.*lst|.*licences?|.*bachelors?|.*emplois?.*temps|.*schedules?|.*inscriptions?|.*enrollments?|.*registrations?|.*preinscriptions?|.*candidatures?|.*applications?|.*resultats?|.*results?|.*scholar.*|.*moodle.*|.*examens?|.*exams?|.*تكوين.*|.*مسلك.*|.*شعبة.*|.*درس.*|.*وحدة.*|.*أساسي.*|.*مستمر.*|.*ماستر.*|.*إجازة.*|.*تسجيل.*|.*نتيجة.*|.*جدول.*|.*أوقات.*|.*امتحان.*)"), "course_catalog")
+        .when(col("source_url").rlike("(?i)(.*professeurs?|.*professors?|.*enseignants?|.*teachers?|.*annuaires?|.*directories?|.*staff|.*profiles?|.*contacts?|.*abouts?|.*أستاذ.*|.*مدرس.*|.*دليل.*|.*موظف.*|.*شخصي.*|.*محاضر.*|.*مفتش.*)"), "faculty_profiles")
+        .when(col("source_url").rlike("(?i)(.*etudiants?|.*students?|.*alumnis?|.*laureats?|.*graduates?|.*vie.*|.*life.*|.*estudiantine.*|.*activites?|.*activities?|.*forums?|.*entreprises?|.*enterprises?|.*carrieres?|.*careers?|.*entrepreneurship.*|.*services?|.*espace_etu.*|.*طالب.*|.*خريج.*|.*حياة.*|.*طلابية.*|.*نشاط.*|.*منتدى.*|.*مقاولة.*|.*مهنة.*|.*خدمات.*)"), "students_external_profiles")
+        .when(col("source_url").rlike("(?i)(.*actualites?|appel|rattrapage|td|.*news|.*evenements?|ateliers|conference|proc|formulaire|procedure|reglement|.*events?|.*actus?|bourse|award|prix||.*annonces?|.*announcements?|.*recrut.*|.*avis|.*notices?|programme|.*presse|.*press|.*communications?|.*organigrammes?|.*presentations?|.*missions?|.*conseils?|.*councils?|.*helps?|.*partenariats?|listes|.*partnerships?|.*testimonials?|.*index|.*accueil|.*home|.*خبر.*|.*إعلان.*|.*إخبار.*|.*حدث.*|.*صحافة.*|.*تواصل.*|.*تقديم.*|.*مهمة.*|.*مجلس.*|.*شراكة.*|.*استقبال.*|.*توظيف.*|.*مباراة.*|.*النتيجة.*|.*لائحة.*|.*المترشحين.*|.*دورة.*|.*مباريات.*|calendrier|planning)"), "university_news")
+        .when(col("source_url").rlike("(?i)(.*recherche.*|.*research.*|.*publications?|.*laboratoires?|.*laboratories?|.*theses?|.*thesis.*|.*cedoc.*|.*doi.*|.*antiplagiat.*|.*plagiarism.*|.*soutenances?|.*defenses?|.*doctorats?|.*doctorates?|.*بحث.*|.*منشور.*|.*مختبر.*|.*أطروحة.*|.*مناقشة.*|.*دكتوراه.*|.*انتحال.*)"), "research_publications")
         .otherwise("unclassified_documents")
     )
     

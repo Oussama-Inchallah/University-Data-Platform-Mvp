@@ -42,8 +42,15 @@ def main():
     logger.info("STARTING HTML INGESTION JOB")
     logger.info("=========================================")
     
-    # Use wildcards to match nested directories: domain/year/month/day/file
-    input_path = "s3a://raw-web-html/*/*/*/*/*" 
+    faculty_filter = sys.argv[1] if len(sys.argv) > 1 else "*"
+    
+    if faculty_filter != "*":
+        logger.info(f"Filtering for faculty: {faculty_filter}")
+        input_path = f"s3a://raw-web-html/*{faculty_filter}*/*/*/*/*"
+    else:
+        logger.info("Processing ALL faculties (no filter provided)")
+        input_path = "s3a://raw-web-html/*/*/*/*/*" 
+        
     base_output_path = "s3a://curated-zone"
     
     try:
