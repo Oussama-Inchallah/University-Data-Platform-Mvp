@@ -1,3 +1,9 @@
+"""
+Extracteur de données OpenAlex (API)
+------------------------------------
+Ce module interroge l'API publique OpenAlex pour récupérer les publications
+scientifiques et les travaux de recherche associés à une université.
+"""
 import logging
 import time
 import requests

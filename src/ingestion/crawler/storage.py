@@ -1,3 +1,9 @@
+"""
+Gestionnaire de Stockage S3 (MinIO)
+-----------------------------------
+Ce module gère l'enregistrement des fichiers bruts (HTML, documents, images)
+et de leurs métadonnées (fichiers JSON) dans MinIO (S3) lors du crawling.
+"""
 import hashlib
 import logging
 from io import BytesIO

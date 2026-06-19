@@ -1,3 +1,10 @@
+"""
+Moteur de Crawling (Ingestion Web)
+----------------------------------
+Ce module contient le crawler principal basé sur BeautifulSoup/requests.
+Il explore les sites web des universités (HTML, PDF, DOCX) et télécharge
+les fichiers bruts pour les stocker dans la zone 'raw' de MinIO.
+"""
 import os
 import re
 import logging
