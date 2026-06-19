@@ -1,3 +1,14 @@
+"""
+Script principal de traitement Spark (ETL)
+------------------------------------------
+Ce script est exécuté par Airflow (SparkSubmitOperator).
+Son rôle est de :
+1. Lire les données brutes (HTML, PDF, Word) depuis la zone 'raw' de MinIO.
+2. Parser le contenu (extraire le texte via Tika ou BeautifulSoup).
+3. Router dynamiquement les données vers la bonne table cible (Hudi) en se basant sur rules.yaml.
+4. Nettoyer et normaliser (hachage, détection de langue).
+5. Écrire le résultat dans la zone 'curated' de MinIO (format Hudi).
+"""
 import sys
 import argparse
 import logging

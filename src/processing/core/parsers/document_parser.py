@@ -1,3 +1,9 @@
+"""
+Parseur de Documents (PDF, Word)
+--------------------------------
+Ce module utilise Tika (tika-python) via une UDF (User Defined Function) Spark
+pour extraire le texte brut et les métadonnées (titre) des fichiers binaires.
+"""
 import logging
 from typing import Dict, Any, Optional
 

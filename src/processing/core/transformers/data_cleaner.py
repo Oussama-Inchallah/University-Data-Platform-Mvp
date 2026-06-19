@@ -1,3 +1,11 @@
+"""
+Nettoyeur de Données (Transformations)
+--------------------------------------
+Ce module contient des UDFs Spark pour nettoyer le texte :
+- Détection de la langue (langdetect)
+- Génération d'un ID unique (hachage de l'URL)
+- Génération d'un Content Hash (détection de doublons)
+"""
 from langdetect import detect, DetectorFactory
 from pyspark.sql.functions import udf
 import pyspark.sql.functions as F

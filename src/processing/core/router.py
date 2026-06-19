@@ -1,3 +1,10 @@
+"""
+Routeur Dynamique Spark
+-----------------------
+Ce module applique les règles issues du rules.yaml au DataFrame Spark.
+Il crée une nouvelle colonne 'target_table' indiquant dans quelle table
+Hudi chaque document doit être sauvegardé (ex: faculty_profiles, events).
+"""
 import urllib.parse
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, when, lit, udf

@@ -1,3 +1,9 @@
+"""
+Parseur HTML (Web)
+------------------
+Ce module utilise BeautifulSoup via une UDF Spark pour extraire le texte propre
+et le titre d'une page HTML brute, en supprimant les balises inutiles (scripts, styles).
+"""
 from bs4 import BeautifulSoup
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StructType, StructField, StringType

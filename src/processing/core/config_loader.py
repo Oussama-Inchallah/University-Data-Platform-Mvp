@@ -1,3 +1,10 @@
+"""
+Chargeur de Configuration (YAML)
+--------------------------------
+Ce module lit les fichiers rules.yaml spécifiques à chaque université.
+Il extrait les règles de routage (expressions régulières sur les URLs)
+pour ventiler les données brutes dans les bonnes tables Hudi.
+"""
 import yaml
 import os
 from typing import Dict, Any, List

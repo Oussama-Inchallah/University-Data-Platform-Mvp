@@ -1,3 +1,10 @@
+"""
+Connecteur Apache Hudi (Datalake)
+---------------------------------
+Ce module permet d'écrire le DataFrame Spark dans la zone 'curated' de MinIO.
+Il gère les opérations d'Upsert (insertion/mise à jour) au format Hudi
+pour garantir l'intégrité des données (ACID).
+"""
 from pyspark.sql import DataFrame
 
 class HudiWriter:

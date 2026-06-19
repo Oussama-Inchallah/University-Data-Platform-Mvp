@@ -1,3 +1,9 @@
+"""
+Connecteur Elasticsearch (Recherche)
+------------------------------------
+Ce module permet d'indexer les données transformées du DataFrame Spark
+vers Elasticsearch pour le moteur de recherche global (actuellement désactivé dans le MVP).
+"""
 from pyspark.sql import DataFrame
 
 class ElasticsearchWriter:
