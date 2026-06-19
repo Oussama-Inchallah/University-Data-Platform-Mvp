@@ -19,9 +19,12 @@ x-airflow-common: &airflow-common
     AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 's3://raw-logs/airflow-logs'
     AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: 'minio_s3_log'
     PYTHONPATH: /opt/airflow
-    AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
+    AIRFLOW_CONN_SPARK_DEFAULT: '{"conn_type": "spark", "host": "local[*]"}'
+    SPARK_HOME: /opt/spark
+    JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
   volumes:
     - ../../src:/opt/airflow/src
+    - ../../src:/app
     - ../../dags:/opt/airflow/dags
     - ./airflow-logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
@@ -119,54 +122,6 @@ services:
     entrypoint: >
       /bin/sh -c " echo 'Waiting for MinIO to start...'; until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}); do sleep 2; done; echo 'Creating buckets...'; /usr/bin/mc mb myminio/raw-web-html --ignore-existing; /usr/bin/mc mb myminio/raw-documents --ignore-existing; /usr/bin/mc mb myminio/raw-images --ignore-existing; /usr/bin/mc mb myminio/raw-json --ignore-existing; /usr/bin/mc mb myminio/raw-logs --ignore-existing; /usr/bin/mc mb myminio/curated-zone --ignore-existing; echo 'Buckets created successfully.'; exit 0; "
 
-  spark-master:
-    build:
-      context: ../../
-      dockerfile: infra/docker/Dockerfile.spark
-    container_name: spark-master
-    command: >
-      bash -c "/opt/spark/sbin/start-master.sh && tail -f /opt/spark/logs/spark--org.apache.spark.deploy.master*.out"
-    environment:
-      - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - AWS_ENDPOINT_URL=http://minio:9000
-    ports:
-      - "9090:8080"
-      - "7077:7077"
-    volumes:
-      - ../../src:/app
-
-  spark-worker:
-    build:
-      context: ../../
-      dockerfile: infra/docker/Dockerfile.spark
-    deploy:
-      replicas: 2
-    command: >
-      bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077 --cores 2 --memory 2g && tail -f /opt/spark/logs/spark--org.apache.spark.deploy.worker*.out"
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
-      - SPARK_WORKER_CORES=2
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - AWS_ENDPOINT_URL=http://minio:9000
-    ports:
-      - "8081-8082:8081"
-    depends_on:
-      - spark-master
-    volumes:
-      - ../../src:/app
 
   hive-metastore-db:
     image: postgres:15-alpine

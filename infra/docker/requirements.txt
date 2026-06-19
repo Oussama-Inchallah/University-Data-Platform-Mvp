@@ -7,3 +7,6 @@ apache-airflow-providers-amazon
 apache-airflow-providers-apache-spark
 pdfplumber==0.10.3
 langdetect==1.0.9
+# Processing job dependencies (needed because Driver runs on Airflow worker)
+pyyaml
+tika
