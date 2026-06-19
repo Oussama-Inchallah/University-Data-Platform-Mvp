@@ -1,3 +1,9 @@
+"""
+DAG d'Ingestion OpenAlex
+------------------------
+Ce DAG se connecte à l'API OpenAlex pour extraire les publications scientifiques
+liées aux universités, et les sauvegarde pour traitement analytique ultérieur.
+"""
 from datetime import datetime, timedelta
 from airflow import DAG
 from airflow.decorators import task
@@ -43,3 +49,4 @@ with DAG(
             fetcher.fetch_institution_works(institution_id=inst_id)
             
     fetch_openalex_data()
+
