@@ -17,13 +17,13 @@ class OpenAlexFetcher:
     """
     BASE_URL = "https://api.openalex.org/works"
 
-    def __init__(self, per_page: int = 200, max_retries: int = 3):
+    def __init__(self, per_page: int = 200, max_retries: int = 3, execution_date: str = None):
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO)
         
         self.per_page = per_page
         self.max_retries = max_retries
-        self.storage = StorageRouter()
+        self.storage = StorageRouter(execution_date=execution_date)
 
     def fetch_institution_works(self, institution_id: str):
         """

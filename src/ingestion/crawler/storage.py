@@ -13,8 +13,9 @@ from datetime import datetime
 from urllib.parse import urlparse, quote
 
 class StorageRouter:
-    def __init__(self, endpoint="minio:9000", access_key="minioadmin", secret_key="minioadmin"):
+    def __init__(self, endpoint="minio:9000", access_key="minioadmin", secret_key="minioadmin", execution_date=None):
         self.logger = logging.getLogger(__name__)
+        self.execution_date = execution_date
         self.client = Minio(
             endpoint,
             access_key=access_key,
@@ -100,7 +101,16 @@ class StorageRouter:
         
         # Le storage_path correspond à la structure partitionnée (sans l'arborescence du site)
         # On utilise strictement le domain_prefix (ex: fsac.univh2c.ma) même si l'URL vient d'ailleurs
-        storage_path = f"{domain_prefix}/year={now.year:04d}/month={now.month:02d}/day={now.day:02d}/{file_name}"
+        if hasattr(self, 'execution_date') and self.execution_date:
+            try:
+                y, m, d = self.execution_date.split('-')
+                date_path = f"year={y}/month={m}/day={d}"
+            except ValueError:
+                date_path = f"year={now.year:04d}/month={now.month:02d}/day={now.day:02d}"
+        else:
+            date_path = f"year={now.year:04d}/month={now.month:02d}/day={now.day:02d}"
+            
+        storage_path = f"{domain_prefix}/{date_path}/{file_name}"
             
         object_name = storage_path
             
@@ -179,7 +189,7 @@ class StorageRouter:
         import json
         base_name = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
         metadata_file_name = f"{base_name}_metadata.json"
-        metadata_path = f"{domain_prefix}/year={now.year:04d}/month={now.month:02d}/day={now.day:02d}/{metadata_file_name}"
+        metadata_path = f"{domain_prefix}/{date_path}/{metadata_file_name}"
         
         metadata_content = json.dumps(json_metadata, indent=2, ensure_ascii=False).encode('utf-8')
         metadata_stream = BytesIO(metadata_content)

@@ -39,14 +39,14 @@ with DAG(
 ) as dag:
 
     @task
-    def fetch_openalex_data():
+    def fetch_openalex_data(**kwargs):
         if not INSTITUTIONS_TO_CRAWL:
             raise ValueError("La liste INSTITUTIONS_TO_CRAWL est vide. Veuillez ajouter au moins un identifiant.")
             
-        fetcher = OpenAlexFetcher()
+        execution_date = kwargs.get('ds')
+        fetcher = OpenAlexFetcher(execution_date=execution_date)
         
         for inst_id in INSTITUTIONS_TO_CRAWL:
             fetcher.fetch_institution_works(institution_id=inst_id)
             
     fetch_openalex_data()
-

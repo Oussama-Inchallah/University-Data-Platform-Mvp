@@ -235,7 +235,7 @@ class DynamicFetcher:
 class GenericCrawler:
     def __init__(self, seed_url: str, allowed_domains: list, max_depth: int, university_id: str,
                  crawl_delay: float = 1.0, request_timeout: int = 30, 
-                 user_agent: str = "Mozilla/5.0", retry_count: int = 3):
+                 user_agent: str = "Mozilla/5.0", retry_count: int = 3, execution_date: str = None):
         self.seed_url = seed_url
         self.allowed_domains = allowed_domains
         self.max_depth = max_depth
@@ -246,7 +246,7 @@ class GenericCrawler:
         logging.basicConfig(level=logging.INFO)
         
         self.fetcher = DynamicFetcher(user_agent=user_agent, request_timeout=request_timeout, retry_count=retry_count)
-        self.storage_router = StorageRouter()
+        self.storage_router = StorageRouter(execution_date=execution_date)
         
     def _is_allowed(self, url: str) -> bool:
         parsed = urlparse(url)

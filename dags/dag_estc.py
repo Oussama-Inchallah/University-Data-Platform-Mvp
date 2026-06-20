@@ -32,13 +32,15 @@ default_args = {
     'retry_delay': timedelta(minutes=5),
 }
 
-def run_ingestion_pipeline():
+def run_ingestion_pipeline(**kwargs):
+    execution_date = kwargs.get('ds')
     crawler = GenericCrawler(
         seed_url=SEED_URL,
         allowed_domains=ALLOWED_DOMAINS,
         max_depth=MAX_DEPTH,
         university_id=UNIVERSITY_ID,
-        crawl_delay=CRAWL_DELAY
+        crawl_delay=CRAWL_DELAY,
+        execution_date=execution_date
     )
     crawler.start_crawl()
 
