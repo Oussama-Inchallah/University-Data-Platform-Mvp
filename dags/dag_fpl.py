@@ -21,7 +21,7 @@ MAX_DEPTH = 3
 CRAWL_DELAY = 1.0
 
 # Spark processing parameters
-DOMAIN_PATTERN = "*fpl.ac.ma", "www.fpl.ac.ma*"
+DOMAIN_PATTERN = "*fpl.ac.ma*"
 CONFIG_PATH = "/app/processing/config/universal_routing.yaml"
 
 
