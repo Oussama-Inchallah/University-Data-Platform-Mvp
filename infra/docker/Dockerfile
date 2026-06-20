@@ -55,7 +55,9 @@ RUN wget -q https://repo1.maven.org/maven2/org/apache/hudi/hudi-spark3.5-bundle_
 # 2e. Pre-download Tika Server JAR to prevent concurrent downloads by PySpark tasks
 RUN mkdir -p /opt/tika \
     && wget -q https://search.maven.org/remotecontent?filepath=org/apache/tika/tika-server-standard/3.1.0/tika-server-standard-3.1.0.jar \
-         -O /opt/tika/tika-server.jar
+         -O /opt/tika/tika-server.jar \
+    && wget -q https://search.maven.org/remotecontent?filepath=org/apache/tika/tika-server-standard/3.1.0/tika-server-standard-3.1.0.jar.md5 \
+         -O /opt/tika/tika-server.jar.md5
 
 ENV TIKA_SERVER_JAR="file:///opt/tika/tika-server.jar"
 
