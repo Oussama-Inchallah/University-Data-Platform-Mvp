@@ -59,16 +59,12 @@ with DAG(
         python_callable=run_ingestion_pipeline,
         execution_timeout=timedelta(hours=2)
     )
-
-    # ---- Task 2 : Processing Spark (raw zone → curated zone via Hudi) ----
-    #   Uses local[*] mode — all processing runs in the driver (Airflow worker).
-    #   This matches the original spark-submit command and avoids executor OOM
-    #   issues on resource-constrained WSL2/Docker environments.
-    process_spark_task = SparkSubmitOperator(
-        task_id="process_spark",
-        application="/app/processing/jobs/main.py",
+    # ---- Task 2 : Phase SILVER (Parsing Tika, Nettoyage, Hudi & ElasticSearch) ----
+    process_silver_task = SparkSubmitOperator(
+        task_id="process_silver_spark",
+        application="/app/processing/jobs/process_raw_to_hudi.py",
         conn_id="spark_default",
-        name=f"UniversityData_Process_{UNIVERSITY_ID}",
+        name=f"UniversityData_Silver_{UNIVERSITY_ID}",
         application_args=[
             "--config", CONFIG_PATH,
             "--execution_date", "{{ ds }}",
@@ -76,24 +72,46 @@ with DAG(
             "--domain_pattern", DOMAIN_PATTERN,
         ],
         conf={
-            # --- Local mode (matches original spark-submit) ---
-            "spark.master": "local[*]",
-            # --- S3A / MinIO ---
+            "spark.master": "local[2]",
             "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
             "spark.hadoop.fs.s3a.access.key": "minioadmin",
             "spark.hadoop.fs.s3a.secret.key": "minioadmin",
             "spark.hadoop.fs.s3a.path.style.access": "true",
             "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
-            # --- Serialization ---
             "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
-            # --- Hudi ---
             "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
         },
         driver_memory="4g",
         verbose=True,
-        execution_timeout=timedelta(hours=3),
+        execution_timeout=timedelta(hours=2),
     )
 
-    # ---- Pipeline : ingestion → processing ----
-    crawl_task >> process_spark_task
+    # ---- Task 3 : Phase GOLD (Lecture Hudi Incrémental, NLP Chunking, Qdrant) ----
+    process_gold_task = SparkSubmitOperator(
+        task_id="process_gold_nlp",
+        application="/app/processing/jobs/process_hudi_to_search.py",
+        conn_id="spark_default",
+        name=f"UniversityData_GoldNLP_{UNIVERSITY_ID}",
+        application_args=[
+            "--execution_date", "{{ ds }}",
+            "--source_system", UNIVERSITY_ID,
+        ],
+        conf={
+            "spark.master": "local[2]",
+            "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+            "spark.hadoop.fs.s3a.access.key": "minioadmin",
+            "spark.hadoop.fs.s3a.secret.key": "minioadmin",
+            "spark.hadoop.fs.s3a.path.style.access": "true",
+            "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+            "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
+            "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
+        },
+        driver_memory="4g",
+        verbose=True,
+        execution_timeout=timedelta(hours=2),
+    )
+
+    # ---- Pipeline Medallion : Ingestion -> Silver -> Gold ----
+    crawl_task >> process_silver_task >> process_gold_task
