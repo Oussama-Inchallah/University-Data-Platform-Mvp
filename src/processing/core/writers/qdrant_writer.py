@@ -32,7 +32,11 @@ class QdrantWriter:
                 from qdrant_client.http.models import Distance, VectorParams
                 
                 client = QdrantClient(url=self.qdrant_url)
-                if not client.collection_exists(collection_name):
+                
+                collections_response = client.get_collections()
+                existing_collections = [c.name for c in collections_response.collections]
+                
+                if collection_name not in existing_collections:
                     self.logger.info(f"Création de la collection Qdrant '{collection_name}' (768 dimensions)...")
                     client.create_collection(
                         collection_name=collection_name,
