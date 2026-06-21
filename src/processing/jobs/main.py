@@ -219,8 +219,19 @@ def main():
     logger.info("Writing all entities to global Elasticsearch index: university_content")
     es_writer.write_index(df_enriched, "university_content")
     
+    total_chunks = 0
+    zero_chunks = 0
+    success_chunks = 0
+    
     if df_vectorized is not None:
         logger.info("Writing vectorized chunks to Qdrant")
+        total_chunks = df_vectorized.count()
+        
+        # Un vecteur rempli de 0 a son premier et dernier élément à 0.0
+        from pyspark.sql.functions import expr
+        zero_chunks = df_vectorized.filter(expr("embedding[0] = 0.0 AND embedding[767] = 0.0")).count()
+        success_chunks = total_chunks - zero_chunks
+        
         qdrant_writer.write_collection(df_vectorized, "university_chunks")
         df_vectorized.unpersist()
     
@@ -259,7 +270,20 @@ def main():
         stat_block.append(format_table("CRAWLER DISCOVERY (Formats)", content_rows))
         stat_block.append(format_table("HTTP STATUS", status_rows))
         stat_block.append(format_table("CURATED ZONE (Hudi Tables)", hudi_rows))
-        stat_block.append(f"\nTotal processed and stored records: {total_records}")
+        
+        stat_block.append("\n==================================================")
+        stat_block.append("              SEARCH & RAG DATABASES              ")
+        stat_block.append("==================================================")
+        stat_block.append(f"-> Elasticsearch (Full Texts): {total_records} documents indexés")
+        
+        # Statistiques détaillées pour Qdrant
+        if df_vectorized is not None:
+            stat_block.append(f"-> Qdrant (Vector Chunks):     {total_chunks} vecteurs au total")
+            stat_block.append(f"     - Réussite (Gemini API) : {success_chunks} vecteurs valides")
+            stat_block.append(f"     - Échec (Remplis de 0)  : {zero_chunks} vecteurs")
+        else:
+            stat_block.append(f"-> Qdrant (Vector Chunks):     0 vecteurs générés et stockés")
+            
         stat_block.append("==================================================")
         
         for line in stat_block:
