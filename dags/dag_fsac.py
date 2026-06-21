@@ -53,14 +53,14 @@ with DAG(
 ) as dag:
 
     # ---- Task 1 : Ingestion (Crawl web → MinIO raw zone) ----
-    crawl_task = PythonOperator(
-        task_id="extract_and_route_to_minio",
+    ingestion_task = PythonOperator(
+        task_id="scrape_and_ingest_to_minio",
         python_callable=run_ingestion_pipeline,
         execution_timeout=timedelta(hours=2),
     )
     # ---- Task 2 : Phase SILVER (Parsing Tika, Nettoyage, Hudi & ElasticSearch) ----
-    process_silver_task = SparkSubmitOperator(
-        task_id="process_silver_spark",
+    silver_hudi_task = SparkSubmitOperator(
+        task_id="parse_and_normalize_to_hudi",
         application="/app/processing/jobs/process_raw_to_hudi.py",
         conn_id="spark_default",
         name=f"UniversityData_Silver_{UNIVERSITY_ID}",
@@ -87,8 +87,8 @@ with DAG(
     )
 
     # ---- Task 3 : Phase GOLD (Lecture Hudi Incrémental, NLP Chunking, Qdrant) ----
-    process_gold_task = SparkSubmitOperator(
-        task_id="process_gold_nlp",
+    gold_search_task = SparkSubmitOperator(
+        task_id="embed_and_index_to_search",
         application="/app/processing/jobs/process_hudi_to_search.py",
         conn_id="spark_default",
         name=f"UniversityData_GoldNLP_{UNIVERSITY_ID}",
@@ -113,4 +113,4 @@ with DAG(
     )
 
     # ---- Pipeline Medallion : Ingestion -> Silver -> Gold ----
-    crawl_task >> process_silver_task >> process_gold_task
+    ingestion_task >> silver_hudi_task >> gold_search_task
