@@ -23,6 +23,8 @@ try:
     from processing.core.transformers.data_cleaner import DataCleaner, detect_language_udf
     from processing.core.writers.hudi_writer import HudiWriter
     from processing.core.writers.es_writer import ElasticsearchWriter
+    from processing.core.writers.qdrant_writer import QdrantWriter
+    from processing.core.transformers.nlp_processor import process_nlp_pipeline
 except ImportError:
     # Fallback si exécuté directement sans PYTHONPATH
     import os
@@ -34,6 +36,8 @@ except ImportError:
     from processing.core.transformers.data_cleaner import DataCleaner, detect_language_udf
     from processing.core.writers.hudi_writer import HudiWriter
     from processing.core.writers.es_writer import ElasticsearchWriter
+    from processing.core.writers.qdrant_writer import QdrantWriter
+    from processing.core.transformers.nlp_processor import process_nlp_pipeline
 
 import pyspark.sql.functions as F
 
@@ -187,12 +191,22 @@ def main():
     # On cache le DataFrame enrichi en mémoire pour éviter de le recalculer pour chaque table
     df_enriched.cache()
     
+    # --- PHASE 3: NLP & Indexation ---
+    logger.info("Starting NLP Pipeline (Chunking & Embeddings)...")
+    try:
+        df_enriched, df_vectorized = process_nlp_pipeline(df_enriched)
+        df_vectorized.cache()
+    except Exception as e:
+        logger.error(f"Failed NLP processing: {e}")
+        df_vectorized = None
+    
     # On récupère la liste unique des tables cibles trouvées dans ce batch
     tables_in_batch = [row["target_table"] for row in df_enriched.select("target_table").distinct().collect()]
     logger.info(f"Entities found in this batch: {tables_in_batch}")
     
     hudi_writer = HudiWriter(base_path="s3a://curated-zone")
-    # es_writer = ElasticsearchWriter()  # Désactivé pour le moment (MVP) car le conteneur elasticsearch n'est pas présent
+    es_writer = ElasticsearchWriter()
+    qdrant_writer = QdrantWriter()
     
     for table_name in tables_in_batch:
         logger.info(f"Writing data to Hudi table: {table_name}")
@@ -202,9 +216,13 @@ def main():
         # Upsert dans la table Hudi spécifique (ex: faculty_profiles)
         hudi_writer.upsert(df_entity, table_name)
         
-    # logger.info("Writing all entities to global Elasticsearch index: university_content")
-    # On écrit tout d'un coup dans le moteur de recherche global
-    # es_writer.write_index(df_enriched, "university_content")
+    logger.info("Writing all entities to global Elasticsearch index: university_content")
+    es_writer.write_index(df_enriched, "university_content")
+    
+    if df_vectorized is not None:
+        logger.info("Writing vectorized chunks to Qdrant")
+        qdrant_writer.write_collection(df_vectorized, "university_chunks")
+        df_vectorized.unpersist()
     
     df_enriched.unpersist()
 

@@ -24,7 +24,8 @@ class ElasticsearchWriter:
             "es.port": self.es_port,
             "es.resource": index_name,
             "es.mapping.id": "record_id", # La clé unique pour écraser (upsert) dans ES
-            "es.write.operation": "upsert"
+            "es.write.operation": "upsert",
+            "es.nodes.wan.only": "true" # Crucial pour éviter des erreurs réseau dans Docker
         }
         
         # Projection : on ne garde que ce qui est utile à la recherche
@@ -38,7 +39,20 @@ class ElasticsearchWriter:
             "crawl_timestamp"
         ).withColumnRenamed("target_table", "entity_type")
         
-        df_es.write.format("org.elasticsearch.spark.sql") \
-            .options(**es_options) \
-            .mode("append") \
-            .save()
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Writing {df_es.count()} documents to Elasticsearch index: {index_name}")
+        
+        try:
+            if df_es.isEmpty():
+                logger.warning("Empty dataframe, skipping Elasticsearch write.")
+                return
+                
+            df_es.write.format("org.elasticsearch.spark.sql") \
+                .options(**es_options) \
+                .mode("append") \
+                .save()
+            logger.info("Successfully wrote data to Elasticsearch.")
+        except Exception as e:
+            logger.error(f"Failed to write to Elasticsearch: {e}")
+            logger.warning("Continuing Spark job despite ES failure.")
