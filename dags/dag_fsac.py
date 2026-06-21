@@ -93,6 +93,7 @@ with DAG(
         conn_id="spark_default",
         name=f"UniversityData_GoldNLP_{UNIVERSITY_ID}",
         application_args=[
+            "--config", CONFIG_PATH,
             "--execution_date", "{{ ds }}",
             "--source_system", UNIVERSITY_ID,
         ],
