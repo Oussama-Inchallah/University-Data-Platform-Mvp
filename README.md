@@ -123,7 +123,7 @@ Le pipeline Spark intègre une logique avancée pour transformer la donnée brut
 
 ## 👁️ Validation et Suivi via Interfaces Web
 
-La plateforme est conçue "UI-First". Vous n'avez pas besoin de lancer de scripts pour valider le traitement de la donnée. Tout est observable via les interfaces web déployées :
+La plateforme est conçue "UI-First". Tout est observable en temps réel via les interfaces web déployées :
 
 1. **Orchestration (Apache Airflow - Port 8080) :**
    - Suivi en temps réel de l'exécution du DAG `ingest_raw_fsac`.
