@@ -1,0 +1,5 @@
+langchain-text-splitters==0.0.1
+google-genai
+qdrant-client==1.7.3
+elasticsearch==8.11.1
+pandas==2.1.4

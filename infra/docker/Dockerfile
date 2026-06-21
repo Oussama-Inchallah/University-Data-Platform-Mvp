@@ -3,8 +3,13 @@ FROM apache/airflow:2.8.0-python3.10
 # 1. Install python dependencies as airflow
 USER airflow
 COPY infra/docker/requirements.txt /tmp/requirements.txt
-RUN pip install --no-cache-dir -r /tmp/requirements.txt \
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir --retries 10 --default-timeout=100 -r /tmp/requirements.txt \
     --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.0/constraints-3.10.txt"
+
+# 1b. Install heavy ML/NLP dependencies WITHOUT Airflow constraints to prevent backtracking loops
+COPY infra/docker/requirements-nlp.txt /tmp/requirements-nlp.txt
+RUN pip install --no-cache-dir --retries 10 --default-timeout=100 -r /tmp/requirements-nlp.txt
 
 # 2. Switch to root to install OS dependencies (Playwright Chromium deps + Java + Spark)
 USER root

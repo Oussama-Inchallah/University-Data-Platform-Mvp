@@ -40,6 +40,6 @@ derby.log
 
 # Fichiers locaux persos
 docs/*.md
-*.txt
 extract_unclassified.py
 test_*.py
+z_docs/
