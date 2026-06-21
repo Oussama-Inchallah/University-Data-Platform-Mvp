@@ -131,7 +131,8 @@ def main():
                 df_meta_docs = df_meta_docs.withColumn("raw_path_meta", F.concat(F.lit("s3a://"), F.col("storage_bucket"), F.lit("/"), F.col("storage_path")))
                 df_raw_docs = df_docs.join(df_meta_docs, df_docs.raw_path == df_meta_docs.raw_path_meta, how="inner")
                 
-                df_docs_normalized = df_raw_docs \
+                # repartition(2) force Spark à n'utiliser que 2 workers pour Tika, empêchant de lancer 16 serveurs Java (OOM-Kill)
+                df_docs_normalized = df_raw_docs.repartition(2) \
                     .withColumn("parsed_doc", parse_document_udf(F.col("content_binary"))) \
                     .withColumn("title_tika", F.col("parsed_doc.title")) \
                     .withColumn("normalized_text", F.col("parsed_doc.text")) \
