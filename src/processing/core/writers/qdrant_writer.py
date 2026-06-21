@@ -51,9 +51,12 @@ class QdrantWriter:
                 return
                 
             # Écriture via le connecteur natif Spark-Qdrant
+            # Le client Python utilise le port 6333 (REST), mais le connecteur Spark utilise le port 6334 (gRPC)
+            spark_qdrant_url = self.qdrant_url.replace("6333", "6334")
+            
             (df.write
                .format("io.qdrant.spark.Qdrant")
-               .option("qdrant_url", self.qdrant_url)
+               .option("qdrant_url", spark_qdrant_url)
                .option("collection_name", collection_name)
                .option("embedding_field", "embedding")
                .option("schema", df.schema.json())
