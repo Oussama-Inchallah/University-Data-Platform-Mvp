@@ -42,84 +42,44 @@ def chunk_text_udf(texts: pd.Series) -> pd.Series:
     return pd.Series(result)
 
 @pandas_udf(ArrayType(FloatType()))
-def generate_embeddings_udf(texts: pd.Series) -> pd.Series:
+def generate_embeddings_udf(iterator: Iterator[pd.Series]) -> Iterator[pd.Series]:
     """
-    Pandas UDF pour générer les vecteurs d'embedding via l'API Google Gemini.
-    Traite les données par batch pour optimiser les requêtes réseau.
+    Pandas UDF (Iterator) pour générer les vecteurs d'embedding via un modèle local HuggingFace.
+    L'utilisation d'un Iterator permet de charger le modèle (470 Mo) en RAM UNE SEULE FOIS 
+    par worker (cœur CPU), au lieu de le recharger pour chaque batch.
+    
+    Modèle : intfloat/multilingual-e5-small (Multilingue, 384 dimensions, léger et très performant)
     """
-    import os
-    import time
     try:
-        from google import genai
+        from sentence_transformers import SentenceTransformer
     except ImportError:
-        return pd.Series([[] for _ in texts])
+        # En cas d'erreur d'import (si la lib n'est pas installée sur le worker)
+        for series in iterator:
+            yield pd.Series([[0.0] * 384 for _ in series])
+        return
         
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        print("ATTENTION: GEMINI_API_KEY non trouvée. Retour de vecteurs vides.")
-        return pd.Series([[] for _ in texts])
-        
-    client = genai.Client(api_key=api_key)
+    # Initialisation du modèle (exécuté 1 seule fois par worker)
+    # Le modèle sera téléchargé la première fois et mis en cache dans ~/.cache/huggingface
+    model = SentenceTransformer("intfloat/multilingual-e5-small")
     
-    # Remplacer les valeurs nulles par des chaînes vides
-    texts_list = [str(t) if t else "empty" for t in texts]
-    
-    embeddings = []
-    import random
-    
-    # L'API Gemini en Free Tier compte CHAQUE texte dans le batch comme 1 requête !
-    # La limite est de 100 requêtes par minute (RPM).
-    # Avec repartition(1), un seul worker s'exécute.
-    # On peut envoyer 90 textes d'un coup, puis attendre 60s pour réinitialiser le quota.
-    batch_size = 90
-    for i in range(0, len(texts_list), batch_size):
-        batch = texts_list[i:i+batch_size]
+    for series in iterator:
+        # Remplacer les valeurs nulles par des chaînes vides
+        texts_list = [str(t) if t else "empty" for t in series]
         
-        from google.genai import types
-        batch_contents = [
-            types.Content(parts=[types.Part.from_text(text=t)]) 
-            for t in batch
-        ]
+        # Le modèle e5-small recommande d'ajouter le préfixe "passage: " pour les documents
+        texts_with_prefix = [f"passage: {t}" for t in texts_list]
         
-        max_retries = 7
-        base_delay = 30
-        success = False
-        
-        for attempt in range(max_retries):
-            try:
-                response = client.models.embed_content(
-                    model="gemini-embedding-2",
-                    contents=batch_contents,
-                    config=types.EmbedContentConfig(output_dimensionality=768)
-                )
-                
-                batch_embeddings = [emb.values for emb in response.embeddings]
-                
-                while len(batch_embeddings) < len(batch):
-                    batch_embeddings.append([0.0] * 768)
-                    
-                embeddings.extend(batch_embeddings[:len(batch)])
-                success = True
-                
-                # Délai obligatoire pour le Free Tier (90 requêtes consommées = 60s d'attente max)
-                time.sleep(60)
-                break
-                
-            except Exception as e:
-                error_msg = str(e)
-                if "429" in error_msg or "RESOURCE_EXHAUSTED" in error_msg:
-                    sleep_time = 60 + random.uniform(0, 10)
-                    print(f"Rate limit Gemini (429) atteint ! Batch de {len(batch)} textes. Tentative {attempt+1}/{max_retries}. Pause forcée de {sleep_time:.1f}s...")
-                    time.sleep(sleep_time)
-                else:
-                    print(f"Erreur fatale API Gemini: {e}")
-                    break
-                    
-        if not success:
-            print(f"Echec final pour le batch après {max_retries} tentatives. Remplissage avec zéros.")
-            embeddings.extend([[0.0] * 768 for _ in batch])
+        try:
+            # Encodage par batch (optimisé localement sur CPU)
+            embeddings_np = model.encode(texts_with_prefix, batch_size=32, show_progress_bar=False)
             
-    return pd.Series(embeddings)
+            # Conversion numpy array -> list of floats
+            embeddings_list = [emb.tolist() for emb in embeddings_np]
+        except Exception as e:
+            print(f"Erreur d'encodage local (SentenceTransformers): {e}")
+            embeddings_list = [[0.0] * 384 for _ in texts_list]
+            
+        yield pd.Series(embeddings_list)
 
 def process_nlp_pipeline(df):
     """
@@ -148,9 +108,10 @@ def process_nlp_pipeline(df):
     from pyspark.sql.functions import sha2, concat_ws
     df_exploded = df_exploded.withColumn("chunk_id", sha2(concat_ws("_", col("record_id"), col("chunk_text")), 256))
     
-    # 3. Vectorisation des chunks
-    # Repartition(1) force Spark à n'utiliser qu'un seul worker pour éviter le DDoS de l'API
-    df_vectorized = df_exploded.repartition(1).withColumn("embedding", generate_embeddings_udf(col("chunk_text")))
+    # 3. Vectorisation des chunks en parallèle (Limité à 2 workers pour éviter le crash RAM / OOM-Killer)
+    # Avec local[*], Spark lance autant de workers que de cœurs CPU. 
+    # repartition(2) force Spark à ne charger que 2 instances du modèle e5-small (2 x 470 Mo = 940 Mo de RAM)
+    df_vectorized = df_exploded.repartition(2).withColumn("embedding", generate_embeddings_udf(col("chunk_text")))
     
     # On retire la colonne temporaire 'chunks' du DF principal pour ne pas l'alourdir
     df_main = df_with_chunks.drop("chunks")

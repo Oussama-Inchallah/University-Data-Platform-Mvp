@@ -279,7 +279,7 @@ def main():
         # Statistiques détaillées pour Qdrant
         if df_vectorized is not None:
             stat_block.append(f"-> Qdrant (Vector Chunks):     {total_chunks} vecteurs au total")
-            stat_block.append(f"     - Réussite (Gemini API) : {success_chunks} vecteurs valides")
+            stat_block.append(f"     - Réussite (Modèle Local) : {success_chunks} vecteurs valides")
             stat_block.append(f"     - Échec (Remplis de 0)  : {zero_chunks} vecteurs")
         else:
             stat_block.append(f"-> Qdrant (Vector Chunks):     0 vecteurs générés et stockés")
