@@ -33,10 +33,10 @@ class QdrantWriter:
                 
                 client = QdrantClient(url=self.qdrant_url)
                 if not client.collection_exists(collection_name):
-                    self.logger.info(f"Création de la collection Qdrant '{collection_name}' (3072 dimensions)...")
+                    self.logger.info(f"Création de la collection Qdrant '{collection_name}' (768 dimensions)...")
                     client.create_collection(
                         collection_name=collection_name,
-                        vectors_config=VectorParams(size=3072, distance=Distance.COSINE)
+                        vectors_config=VectorParams(size=768, distance=Distance.COSINE)
                     )
             except Exception as e:
                 self.logger.warning(f"Impossible de vérifier ou créer la collection Qdrant avec qdrant_client: {e}")
@@ -55,7 +55,7 @@ class QdrantWriter:
                .option("schema", df.schema.json())
                # Configuration optionnelle pour la création automatique de la collection
                .option("vector_name", "") # Vector anonyme
-               .option("vector_size", "3072") # Taille pour gemini-embedding-2 (Gemini API)
+               .option("vector_size", "768") # Taille pour text-embedding-004 (Gemini API)
                .option("distance", "Cosine")
                .mode("append")
                .save())

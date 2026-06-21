@@ -71,24 +71,32 @@ def generate_embeddings_udf(texts: pd.Series) -> pd.Series:
     for i in range(0, len(texts_list), batch_size):
         batch = texts_list[i:i+batch_size]
         try:
+            from google.genai import types
+            # Formater chaque texte dans un objet Content pour éviter l'agrégation
+            batch_contents = [
+                types.Content(parts=[types.Part.from_text(text=t)]) 
+                for t in batch
+            ]
+            
             response = client.models.embed_content(
                 model="gemini-embedding-2",
-                contents=batch
+                contents=batch_contents,
+                config=types.EmbedContentConfig(output_dimensionality=768)
             )
             # Extraire les valeurs pour chaque embedding du batch
             batch_embeddings = [emb.values for emb in response.embeddings]
             
             # Pad si l'API a retourné moins d'éléments que prévu
             while len(batch_embeddings) < len(batch):
-                batch_embeddings.append([0.0] * 3072)
+                batch_embeddings.append([0.0] * 768)
                 
             embeddings.extend(batch_embeddings[:len(batch)])
             time.sleep(4) # Délai pour éviter le rate-limit (15 RPM = 4 sec)
         except Exception as e:
             print(f"Erreur API Gemini: {e}")
             # En cas d'erreur, remplir avec des vecteurs vides pour ce batch
-            # Le modèle gemini-embedding-2 a 3072 dimensions
-            embeddings.extend([[0.0] * 3072 for _ in batch])
+            # Le modèle a été forcé à 768 dimensions
+            embeddings.extend([[0.0] * 768 for _ in batch])
             
     return pd.Series(embeddings)
 

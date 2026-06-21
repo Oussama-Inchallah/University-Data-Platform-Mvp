@@ -43,3 +43,4 @@ docs/*.md
 extract_unclassified.py
 test_*.py
 z_docs/
+z_gemini-docs/
