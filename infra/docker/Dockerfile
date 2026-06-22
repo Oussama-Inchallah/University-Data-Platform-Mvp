@@ -66,6 +66,10 @@ RUN mkdir -p /opt/tika \
 
 ENV TIKA_SERVER_JAR="file:///opt/tika/tika-server.jar"
 
-# 3. Switch back to airflow to install the browser binaries
+# 3. Switch back to airflow to install the browser binaries and pre-download models
 USER airflow
 RUN /home/airflow/.local/bin/playwright install chromium
+
+# 4. Pre-download HuggingFace model to bake it into the Docker Image (Zero runtime latency)
+ENV HF_HOME=/opt/airflow/.cache/huggingface
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
