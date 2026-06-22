@@ -1,8 +1,10 @@
 """
 Job Spark - Zone Silver : Raw -> Hudi
 -------------------------------------
-Lit les fichiers bruts (HTML, PDF) depuis MinIO, extrait le texte (Tika/BS4),
-le normalise et l'enregistre dans les tables Hudi (curated-zone).
+Architecture ZERO-OOM (Metadata-Driven).
+Lit uniquement les fichiers JSON de métadonnées. L'extraction Tika et BeautifulSoup
+est effectuée en streamant le contenu directement depuis MinIO dans les workers Python,
+évitant totalement de charger des fichiers binaires dans la mémoire de Spark.
 """
 import sys
 import argparse
@@ -49,7 +51,7 @@ def main():
     parser.add_argument("--domain_pattern", required=False)
     args = parser.parse_args()
 
-    logger.info(f"Starting SILVER job: {args.source_system}")
+    logger.info(f"Starting SILVER job (ZERO-OOM Architecture): {args.source_system}")
 
     loader = ConfigLoader(args.config)
     source_system = args.source_system
@@ -57,60 +59,60 @@ def main():
     
     spark = get_spark_session(f"UniversityData_Silver_{source_system}")
     
-    # 1. Lecture MinIO
+    # 1. Lecture MinIO (Metadata-Driven)
     df_html_normalized = None
     df_docs_normalized = None
     
     try:
-        # HTML
+        # --- HTML ---
         if args.execution_date.lower() == "all":
-            base_html = f"s3a://raw-web-html/{domain_pattern}/year=*/month=*/day=*/*"
             base_json_html = f"s3a://raw-web-html/{domain_pattern}/year=*/month=*/day=*/*_metadata.json"
         else:
             year, month, day = args.execution_date.split("-")
-            base_html = f"s3a://raw-web-html/{domain_pattern}/year={year}/month={month}/day={day}/*"
             base_json_html = f"s3a://raw-web-html/{domain_pattern}/year={year}/month={month}/day={day}/*_metadata.json"
         
-        rdd_html = spark.sparkContext.wholeTextFiles(base_html)
-        if not rdd_html.isEmpty():
-            df_html = rdd_html.toDF(["raw_path", "content"]).filter(~F.col("raw_path").endswith(".json"))
+        try:
             df_meta_html = spark.read.option("multiLine", "true").json(base_json_html)
-            df_meta_html = df_meta_html.withColumn("raw_path_meta", F.concat(F.lit("s3a://"), F.col("storage_bucket"), F.lit("/"), F.col("storage_path")))
-            df_raw_html = df_html.join(df_meta_html, df_html.raw_path == df_meta_html.raw_path_meta, how="inner")
+            # Repartition légère pour forcer le traitement parallèle propre sans OOM
+            df_meta_html = df_meta_html.repartition(20)
             
-            df_html_normalized = df_raw_html \
-                .withColumn("parsed_html", parse_html_udf(F.col("content"))) \
+            df_html_normalized = df_meta_html \
+                .withColumn("parsed_html", parse_html_udf(F.col("storage_bucket"), F.col("storage_path"))) \
                 .withColumn("title", F.col("parsed_html.title")) \
                 .withColumn("normalized_text", F.col("parsed_html.text")) \
-                .drop("parsed_html", "content")
+                .drop("parsed_html")
+            logger.info("HTML metadata loaded successfully.")
+        except Exception as e:
+            logger.info(f"No HTML data found or skipped: {e}")
                 
-        # Documents
+        # --- Documents (PDF, etc) ---
         if args.execution_date.lower() == "all":
-            base_docs = f"s3a://raw-documents/{domain_pattern}/year=*/month=*/day=*/*"
             base_json_docs = f"s3a://raw-documents/{domain_pattern}/year=*/month=*/day=*/*_metadata.json"
         else:
-            base_docs = f"s3a://raw-documents/{domain_pattern}/year={year}/month={month}/day={day}/*"
             base_json_docs = f"s3a://raw-documents/{domain_pattern}/year={year}/month={month}/day={day}/*_metadata.json"
             
-        rdd_docs = spark.sparkContext.binaryFiles(base_docs)
-        if not rdd_docs.isEmpty():
-            df_docs = rdd_docs.toDF(["raw_path", "content_binary"]).filter(~F.col("raw_path").endswith(".json"))
+        try:
             df_meta_docs = spark.read.option("multiLine", "true").json(base_json_docs)
-            df_meta_docs = df_meta_docs.withColumn("raw_path_meta", F.concat(F.lit("s3a://"), F.col("storage_bucket"), F.lit("/"), F.col("storage_path")))
-            df_raw_docs = df_docs.join(df_meta_docs, df_docs.raw_path == df_meta_docs.raw_path_meta, how="inner")
+            df_meta_docs = df_meta_docs.repartition(20)
             
-            df_docs_normalized = df_raw_docs.repartition(2) \
-                .withColumn("parsed_doc", parse_document_udf(F.col("content_binary"))) \
+            # L'UDF télécharge directement le fichier en streamant, évitant de charger le binaire dans Spark
+            df_docs_normalized = df_meta_docs \
+                .withColumn("parsed_doc", parse_document_udf(F.col("storage_bucket"), F.col("storage_path"))) \
                 .withColumn("title_tika", F.col("parsed_doc.title")) \
                 .withColumn("normalized_text", F.col("parsed_doc.text")) \
-                .drop("parsed_doc", "content_binary")
+                .drop("parsed_doc")
             
+            # Resolve title fallback
             if "title" in df_docs_normalized.columns:
                 df_docs_normalized = df_docs_normalized.withColumn("title", 
                     F.when(F.col("title_tika") != "", F.col("title_tika")).otherwise(F.col("title"))
                 ).drop("title_tika")
             else:
                 df_docs_normalized = df_docs_normalized.withColumnRenamed("title_tika", "title")
+                
+            logger.info("Document metadata loaded successfully.")
+        except Exception as e:
+            logger.info(f"No Document data found or skipped: {e}")
                 
     except Exception as e:
         logger.error(f"Error reading MinIO: {e}")
@@ -119,7 +121,7 @@ def main():
     # Union
     df_raw = None
     if df_html_normalized is not None and df_docs_normalized is not None:
-        df_raw = df_html_normalized.select(*df_docs_normalized.columns).unionByName(df_docs_normalized, allowMissingColumns=True)
+        df_raw = df_html_normalized.unionByName(df_docs_normalized, allowMissingColumns=True)
     elif df_html_normalized is not None:
         df_raw = df_html_normalized
     elif df_docs_normalized is not None:
@@ -141,21 +143,43 @@ def main():
         .withColumn("language", detect_language_udf(F.col("normalized_text"))) \
         .withColumn("record_id", DataCleaner.generate_record_id("source_system", "source_url")) \
         .withColumn("content_hash", DataCleaner.generate_content_hash("normalized_text")) \
-        .withColumn("business_timestamp", F.col("crawl_timestamp")) \
-        .drop("raw_path", "raw_path_meta")
+        .withColumn("business_timestamp", F.col("crawl_timestamp"))
 
-    df_enriched.cache()
-    total_docs = df_enriched.count()
+    # ============================================================
+    # CHECKPOINT STRATEGY
+    # -----------------------------------------------------------
+    # Break lineage to prevent Spark from re-executing UDF logic.
+    # ============================================================
+    checkpoint_path = f"s3a://curated-zone/_tmp_checkpoint_{source_system}"
+    logger.info(f"Writing checkpoint to {checkpoint_path}...")
+    
+    df_enriched.write.mode("overwrite").parquet(checkpoint_path)
+    logger.info("Checkpoint written. Reading back from Parquet...")
+    
+    df_checkpoint = spark.read.parquet(checkpoint_path)
+    
+    total_docs = df_checkpoint.count()
+    logger.info(f"Total documents to process: {total_docs}")
     
     # 3. Ecriture Hudi
-    tables_in_batch = [row["target_table"] for row in df_enriched.select("target_table").distinct().collect()]
+    tables_in_batch = [row["target_table"] for row in df_checkpoint.select("target_table").distinct().collect()]
     hudi_writer = HudiWriter(base_path="s3a://curated-zone")
     
     for table in tables_in_batch:
-        df_entity = df_enriched.filter(F.col("target_table") == table)
+        df_entity = df_checkpoint.filter(F.col("target_table") == table)
         hudi_writer.upsert(df_entity, table)
+        logger.info(f"  -> Hudi table '{table}' written successfully.")
 
-    df_enriched.unpersist()
+    # Cleanup checkpoint
+    try:
+        hadoop_conf = spark._jsc.hadoopConfiguration()
+        fs = spark._jvm.org.apache.hadoop.fs.FileSystem.get(
+            spark._jvm.java.net.URI(checkpoint_path), hadoop_conf
+        )
+        fs.delete(spark._jvm.org.apache.hadoop.fs.Path(checkpoint_path), True)
+        logger.info("Checkpoint cleaned up.")
+    except Exception as e:
+        logger.warning(f"Could not clean up checkpoint: {e}")
     
     # --- METRICS DASHBOARD ---
     end_time = time.time()
@@ -185,11 +209,11 @@ def main():
     format_stats = ""
     table_stats = ""
     try:
-        if "content_type" in df_enriched.columns:
-            format_rows = df_enriched.groupBy("content_type").count().collect()
+        if "content_type" in df_checkpoint.columns:
+            format_rows = df_checkpoint.groupBy("content_type").count().collect()
             format_stats = "\n" + format_table("FORMATS", format_rows) + "\n"
         
-        table_rows = df_enriched.groupBy("target_table").count().collect()
+        table_rows = df_checkpoint.groupBy("target_table").count().collect()
         table_stats = "\n" + format_table("HUDI TABLES", table_rows) + "\n"
     except Exception as e:
         logger.warning(f"Could not calculate detailed stats: {e}")
@@ -201,7 +225,7 @@ def main():
 {format_stats}{table_stats}
 
 ==================================================
-        🚀 UNIVERSITY DATA - SILVER METRICS        
+        🚀 ZERO-OOM ARCHITECTURE METRICS        
 ==================================================
 [INFO] Source Traitée   : {source_system}
 [INFO] Durée Totale     : {duration_sec:.2f} secondes

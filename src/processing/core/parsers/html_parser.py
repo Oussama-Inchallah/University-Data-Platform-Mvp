@@ -1,22 +1,47 @@
 """
-Parseur HTML (Web)
-------------------
+Parseur HTML (Web) - Metadata Driven
+------------------------------------
 Ce module utilise BeautifulSoup via une UDF Spark pour extraire le texte propre
-et le titre d'une page HTML brute, en supprimant les balises inutiles (scripts, styles).
+et le titre d'une page HTML téléchargée à la volée depuis MinIO.
 """
 from bs4 import BeautifulSoup
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StructType, StructField, StringType
 from typing import Dict
+import os
+import urllib3
+import logging
 
-def _parse_html_content(html_content: str) -> Dict[str, str]:
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+logger = logging.getLogger(__name__)
+
+def extract_html_from_minio(bucket: str, path: str) -> Dict[str, str]:
     """
-    Extrait le titre et le texte utile d'une page HTML.
-    Nettoie les balises invisibles ou structurelles (scripts, styles, nav...).
+    Télécharge une page HTML depuis MinIO et extrait son texte utile et son titre.
     """
-    if not html_content:
+    if not bucket or not path:
         return {"title": "", "text": ""}
+        
     try:
+        from minio import Minio
+        
+        endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000").replace("http://", "").replace("https://", "")
+        access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+        secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+        
+        client = Minio(
+            endpoint,
+            access_key=access_key,
+            secret_key=secret_key,
+            secure=False
+        )
+        
+        response = client.get_object(bucket, path)
+        html_content = response.read().decode('utf-8', errors='ignore')
+        response.close()
+        response.release_conn()
+        
         soup = BeautifulSoup(html_content, 'html.parser')
         
         # Extraction du titre
@@ -38,8 +63,8 @@ def _parse_html_content(html_content: str) -> Dict[str, str]:
         text = ' '.join(chunk for chunk in chunks if chunk)
         
         return {"title": title, "text": text}
-    except Exception:
-        # En cas de page malformée, on retourne vide
+    except Exception as e:
+        logger.error(f"Erreur extraction HTML {bucket}/{path}: {str(e)}")
         return {"title": "", "text": ""}
 
 # Définition du schéma de retour de l'UDF
@@ -49,4 +74,4 @@ parse_html_schema = StructType([
 ])
 
 # UDF (User Defined Function) Spark prête à l'emploi
-parse_html_udf = udf(_parse_html_content, parse_html_schema)
+parse_html_udf = udf(extract_html_from_minio, parse_html_schema)
