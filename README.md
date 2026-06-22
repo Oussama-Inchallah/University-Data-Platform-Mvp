@@ -2,7 +2,7 @@
 
 Une plateforme de données moderne, scalable et orientée IA conçue spécifiquement pour le contexte universitaire (scraping, analytique, recherche full-text, et RAG). 
 
-Cette infrastructure unifie l'ingestion de données hétérogènes, le stockage Lakehouse, le traitement Big Data distribué, l'indexation sémantique et la Business Intelligence dans une architecture centralisée.
+Cette infrastructure unifie l'ingestion de données hétérogènes, le stockage Lakehouse, le traitement Big Data distribué, l'indexation sémantique et la Business Intelligence dans une architecture centralisée, **hautement optimisée pour la stabilité (Zero-OOM) sur des environnements locaux et contraints**.
 
 ---
 
@@ -26,14 +26,14 @@ graph TD
 
     %% Traitement
     subgraph "3. Processing & AI (Apache Spark)"
-        D -->|Extraction & Parsing| E(Spark ETL)
-        E -->|Nettoyage HTML/PDF| F(Normalisation)
-        F -->|Chunking & Local Embedding\ne5-small| G(NLP Pipeline)
+        D -->|Streaming S3A & Parsing Tika| E(Spark Silver)
+        E -->|Nettoyage HTML/PDF| F(Normalisation Hudi)
+        F -->|Chunking & Local Embedding\ne5-small| G(Spark Gold NLP)
     end
 
     %% Stockage Curé & Indexation
     subgraph "4. Serving & Indexing Layer"
-        G -->|Upsert Hudi| H[(Apache Hudi\nCurated Zone)]
+        F --> H[(Apache Hudi\nCurated Zone)]
         G -->|Text pur| I[(Elasticsearch\nFull-Text)]
         G -->|Vecteurs 384d| J[(Qdrant\nSemantic Search)]
     end
@@ -46,21 +46,82 @@ graph TD
 
     O((Apache Airflow)) -.->|Orchestration| D
     O -.->|Orchestration| E
+    O -.->|Orchestration| G
 ```
 
 ---
 
-## 🛠️ Stack Technique
+## 🌊 Flux de Données (Data Flows)
+
+La plateforme repose sur un flux de données (pipeline) découpé en phases strictes, garantissant résilience, scalabilité et traçabilité.
+
+### Flux 1 : Ingestion (Collecte de la Donnée Brute)
+Les Crawlers (Python/Playwright) extraient les données des sites universitaires. Les données brutes (fichiers HTML, PDF, Word, JSON) sont poussées **directement en streaming** vers MinIO sans charger d'énormes objets en mémoire.
+```mermaid
+sequenceDiagram
+    participant Crawler as Airflow Ingestion Task
+    participant Web as Site Universitaire
+    participant MinIO as MinIO S3 (Zone Raw)
+    
+    Crawler->>Web: Requête HTTP / Scraping Playwright
+    Web-->>Crawler: Page HTML / Fichier PDF binaire
+    Crawler->>MinIO: Stream direct (put_object)
+    Note over Crawler,MinIO: Sauvegarde brute inaltérée
+```
+
+### Flux 2 : Zone Silver (Nettoyage & Extraction Anti-OOM)
+Afin d'éviter les crashs mémoire (OOM) sur les gros fichiers, ce flux utilise **Apache Spark en mode Streaming Binaire MinIO**. Spark ne charge plus l'intégralité des binaires en RAM, mais lit directement les flux S3 via la librairie boto3/S3A. Les fichiers riches (PDF) sont envoyés à Apache Tika.
+```mermaid
+sequenceDiagram
+    participant Spark as Spark Job (Silver)
+    participant MinIO as MinIO S3 (Zone Raw)
+    participant Tika as Serveur Apache Tika
+    participant Hudi as Apache Hudi (Zone Silver)
+    
+    Spark->>MinIO: Liste des chemins (s3a://raw-...)
+    Spark->>MinIO: Lecture des données en flux (Streaming)
+    Spark->>Tika: Envoi du payload binaire pour parsing
+    Tika-->>Spark: Texte brut extrait et métadonnées
+    Spark->>Hudi: Upsert (Dédoublonnage & Historisation)
+```
+
+### Flux 3 : Zone Gold (NLP, Vectorisation & Indexation)
+Les données textuelles curées sont transformées en vecteurs mathématiques (Embeddings) pour l'Intelligence Artificielle. Le modèle HuggingFace est pré-compilé dans l'image Docker pour éviter toute latence réseau, et la communication PyArrow est bridée pour garantir la stabilité.
+```mermaid
+sequenceDiagram
+    participant Spark as Spark Job (Gold)
+    participant Hudi as Apache Hudi (Zone Silver)
+    participant NLP as Modèle Local (E5-Small)
+    participant ES as Elasticsearch
+    participant Qdrant as Qdrant (Base Vectorielle)
+    
+    Spark->>Hudi: Lecture incrémentale / complète
+    Spark->>Spark: Découpage en Chunks (Langchain)
+    Spark->>NLP: Génération Embeddings via Pandas UDF
+    Note over Spark,NLP: IPC PyArrow limité à 2000 records par batch
+    Spark->>ES: Indexation du texte brut (Recherche Lexicale)
+    Spark->>Qdrant: Indexation Vectorielle à 384 dimensions (RAG)
+```
+
+---
+
+## 🛠️ Stack Technique & Optimisations Récentes
 
 * **Orchestration :** Apache Airflow (CeleryExecutor)
 * **Stockage Brut :** MinIO (S3-compatible)
 * **Processing :** Apache Spark 3.5.1 (PySpark)
 * **Format Lakehouse :** Apache Hudi
 * **Catalogue de Données :** Apache Hive Metastore (PostgreSQL)
-* **IA & NLP :** `sentence-transformers` (`intfloat/multilingual-e5-small`) via PySpark Iterator UDFs
+* **IA & NLP :** `sentence-transformers` (`intfloat/multilingual-e5-small`).
 * **Indexation Full-Text :** Elasticsearch 8.11
 * **Recherche Vectorielle (RAG) :** Qdrant
-* **Dataviz / BI :** Metabase
+
+### 🔧 Optimisations de Stabilité (Juin 2026)
+L'architecture a été profondément repensée pour fonctionner parfaitement sur des environnements Docker locaux sans erreurs de surcharge mémoire (`Exit Code -9` / `EOFException`) :
+1. **Zero-Latency ML :** Le modèle HuggingFace est désormais directement gravé dans l'image Docker (Build time), supprimant totalement les délais de téléchargement de 5 minutes au démarrage des tâches.
+2. **Mémoire JVM Restreinte :** Limitation volontaire à `driver-memory=1g` et exécution sur 1 seul cœur CPU (`local[1]`) pour la phase Gold, laissant de la RAM libre au travailleur Python (`Worker Python`).
+3. **Micro-Batches PyArrow :** La taille des lots de transfert de données entre le moteur Java de Spark et les fonctions Python Pandas UDF a été drastiquement réduite (`spark.sql.execution.arrow.maxRecordsPerBatch=2000`) pour lisser l'empreinte RAM.
+4. **Streaming S3 :** Abandon de la méthode `sparkContext.wholeTextFiles` au profit d'un pipeline de lecture MinIO boto3 asynchrone évitant le stockage des binaires dans le Driver Spark.
 
 ---
 
@@ -69,13 +130,13 @@ graph TD
 La structure du code source est découpée selon les responsabilités métiers :
 
 * `dags/` : Définition des workflows Apache Airflow (pipelines d'ingestion et de traitement).
-* `infra/` : Fichiers d'infrastructure as code (Docker Compose, Dockerfiles, schémas).
-* `src/ingestion/` : Scripts de collecte de données (Crawlers web, intégration OpenAlex).
+* `infra/docker/` : Fichiers d'infrastructure as code (Docker Compose, Dockerfile).
+* `src/ingestion/` : Scripts de collecte de données (Crawlers web structurés).
 * `src/processing/` : 
-  * `core/parsers/` : Extracteurs de texte brut depuis HTML, PDF, etc.
-  * `core/transformers/` : Traitements NLP (Chunking, Vectorisation locale).
-  * `core/writers/` : Connecteurs de sortie (Hudi, Elastic, Qdrant).
-  * `jobs/main.py` : Le point d'entrée principal des jobs Spark.
+  * `core/parsers/` : Extracteurs de texte brut (HTML BeautifulSoup, Tika PDF).
+  * `core/transformers/` : Traitements NLP distribués (Chunking, Vectorisation locale).
+  * `core/writers/` : Connecteurs de sortie massif (Hudi, Elasticsearch, Qdrant).
+  * `jobs/` : Les points d'entrée principaux exécutés par Spark-Submit.
 
 ---
 
@@ -83,74 +144,51 @@ La structure du code source est découpée selon les responsabilités métiers :
 
 ### Prérequis
 * Docker et Docker Compose
-* 16 Go de RAM minimum (alloués à Docker Desktop)
-* 4+ Cœurs CPU
+* Au minimum 16 Go de RAM alloués à la machine virtuelle Docker (WSL2 sous Windows).
+* Idéalement 4+ cœurs CPU alloués à Docker.
 
 ### Étape 1 : Préparation de l'environnement
-Copiez le fichier `.env.example` en `.env` et configurez vos identifiants si nécessaire :
+Copiez le fichier `.env.example` en `.env` (si nécessaire) :
 ```bash
 cp infra/docker/.env.example infra/docker/.env
 ```
 
 ### Étape 2 : Lancement des conteneurs
-Rendez-vous dans le dossier de l'infrastructure Docker et lancez la commande de build :
+Rendez-vous dans le dossier de l'infrastructure Docker et lancez la compilation complète (le modèle IA sera téléchargé pendant cette phase) :
 ```bash
 cd infra/docker
-docker compose build --no-cache  # Build de l'image (Airflow + Dépendances ML/NLP)
+docker compose build --no-cache
 docker compose up -d
 ```
 
 ### Étape 3 : Accès aux Interfaces
-Une fois les conteneurs démarrés, vous pouvez accéder aux différentes interfaces via votre navigateur :
+Une fois démarré, le projet met à disposition plusieurs tableaux de bord :
 * **Apache Airflow :** `http://localhost:8080` (Défaut : `airflow` / `airflow`)
 * **MinIO Console :** `http://localhost:9001` (Défaut : `minioadmin` / `minioadmin`)
 * **Qdrant Dashboard :** `http://localhost:6333/dashboard`
 * **Elasticsearch :** `http://localhost:9200`
-* **Metabase :** *(Déployé selon votre configuration infra)*
+* **Metabase BI :** `http://localhost:3000`
 
 ---
 
-## 🧠 Le Pipeline NLP et RAG (Explication Technique)
+## 👁️ Suivi Visuel et Opérations
 
-Le pipeline Spark intègre une logique avancée pour transformer la donnée brute en connaissance interrogeable par IA :
+La plateforme est conçue "UI-First". Tout est observable en temps réel :
 
-1. **Extraction de Texte :** Nettoyage automatique des balises HTML et extraction des PDFs.
-2. **Chunking :** Découpage sémantique du texte via Langchain.
-3. **Modèle Local E5-Small :** Remplacement des APIs cloud coûteuses par le modèle Open Source `intfloat/multilingual-e5-small`. Ce modèle génère des vecteurs à **384 dimensions**, parfait pour les langues comme le Français, l'Arabe et l'Anglais.
-4. **Optimisation PySpark OOM :** Le calcul vectoriel utilise des **Pandas UDFs Iterator** combinés à un bridage (`repartition(2)`) afin d'éviter les crashs de RAM (Out-Of-Memory) tout en exploitant les CPU locaux.
-
----
-
-## 👁️ Validation et Suivi via Interfaces Web
-
-La plateforme est conçue "UI-First". Tout est observable en temps réel via les interfaces web déployées :
-
-1. **Orchestration (Apache Airflow - Port 8080) :**
-   - Suivi en temps réel de l'exécution du DAG `ingest_raw_fsac`.
-   - Accès aux logs de chaque tâche Spark directement depuis l'interface UI.
-
-2. **Data Lake (MinIO Console - Port 9001) :**
-   - **Zone Brute :** Vérification visuelle des fichiers ingérés dans les buckets `raw-web-html`, `raw-documents`, etc.
-   - **Zone Curée :** Validation de la création des tables Hudi et de leurs partitions temporelles.
-
-3. **Recherche Sémantique (Qdrant Dashboard - Port 6333/dashboard) :**
-   - Visualisation immédiate des points vectoriels.
-   - Interface intégrée pour tester des requêtes sémantiques sur la collection `university_chunks`.
-
-4. **Business Intelligence (Metabase - Port 3000) :**
-   - Connexion directe au catalogue Apache Hive pour explorer les données traitées via une interface SQL visuelle ou glisser-déposer.
+1. **Airflow (Port 8080) :**
+   Déclenchez vos DAGs (ex: `ingest_raw_fsac`) et observez la progression visuellement. Les logs de chaque tâche Spark sont récupérés en direct.
+2. **MinIO (Port 9001) :**
+   Visualisez la zone d'atterrissage (`raw-web-html`) ou inspectez l'architecture physique de vos tables Apache Hudi dans le bucket `curated-zone`.
+3. **Qdrant (Port 6333/dashboard) :**
+   Explorez visuellement les points en 384 dimensions de la collection `university_chunks` générés par le pipeline NLP.
+4. **Metabase (Port 3000) :**
+   Création de tableaux de bords analytiques via le point de terminaison Spark Thrift Server (Metastore).
 
 ---
 
 ## 🛡️ Gouvernance et Sécurité des Données
 
 * **Lignage de Données (Data Lineage) :** Chaque document stocké dans Hudi conserve l'empreinte exacte (`content_hash`) et l'URL source pour garantir la traçabilité complète de l'information jusqu'à sa source web initiale.
-* **Isolation Storage/Compute :** L'architecture sépare strictement le calcul (Spark) du stockage (MinIO), permettant un redimensionnement asymétrique des nœuds en production.
-* **Gestion des Formats Ouverts :** En s'appuyant sur Apache Hudi et Parquet, la plateforme évite tout "Vendor Lock-in", garantissant l'accessibilité pérenne des données académiques.
-
----
-
-## 📊 Observabilité et Monitoring
-
-* **Centralisation des Logs :** Les logs des exécutions Spark et Airflow sont automatiquement routés vers Elasticsearch pour une analyse post-mortem rapide.
-* **Design "Idempotent" :** Les pipelines de données peuvent être rejoués à tout moment sans risque de duplication, grâce au moteur d'UPSERT natif d'Apache Hudi.
+* **Isolation Storage/Compute :** L'architecture sépare strictement le calcul (Spark) du stockage (MinIO).
+* **Format Ouvert (Lakehouse) :** En s'appuyant sur Apache Hudi et Parquet, la plateforme évite le "Vendor Lock-in" et maintient vos archives pérennes.
+* **Design "Idempotent" :** Le pipeline peut crasher et être relancé 100 fois ; grâce au moteur d'UPSERT d'Hudi et à l'écrasement des Index ID dans Elasticsearch/Qdrant, vous n'aurez **jamais** de doublons dans la plateforme.
