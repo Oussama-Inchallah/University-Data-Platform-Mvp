@@ -71,7 +71,7 @@ with DAG(
             "--domain_pattern", DOMAIN_PATTERN,
         ],
         conf={
-            "spark.master": "local[2]",
+            "spark.master": "local[1]",
             "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
             "spark.hadoop.fs.s3a.access.key": "minioadmin",
             "spark.hadoop.fs.s3a.secret.key": "minioadmin",
@@ -81,7 +81,7 @@ with DAG(
             "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
         },
-        driver_memory="4g",
+        driver_memory="2g",
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
@@ -90,7 +90,7 @@ with DAG(
     gold_search_task = SparkSubmitOperator(
         task_id="embed_and_index_to_search",
         application="/app/processing/jobs/process_hudi_to_search.py",
-        conn_id="spark_default",
+        conn_id="spark_gold",
         name=f"UniversityData_GoldNLP_{UNIVERSITY_ID}",
         application_args=[
             "--config", CONFIG_PATH,
@@ -98,7 +98,6 @@ with DAG(
             "--source_system", UNIVERSITY_ID,
         ],
         conf={
-            "spark.master": "local[2]",
             "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
             "spark.hadoop.fs.s3a.access.key": "minioadmin",
             "spark.hadoop.fs.s3a.secret.key": "minioadmin",
@@ -108,7 +107,7 @@ with DAG(
             "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
         },
-        driver_memory="4g",
+        driver_memory="2g",
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
