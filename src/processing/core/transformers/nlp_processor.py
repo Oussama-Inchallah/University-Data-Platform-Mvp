@@ -70,8 +70,8 @@ def generate_embeddings_udf(iterator: Iterator[pd.Series]) -> Iterator[pd.Series
         texts_with_prefix = [f"passage: {t}" for t in texts_list]
         
         try:
-            # Encodage par batch (optimisé localement sur CPU)
-            embeddings_np = model.encode(texts_with_prefix, batch_size=32, show_progress_bar=False)
+            # Encodage par batch (optimisé localement sur CPU, batch_size=16 est meilleur pour le cache L3)
+            embeddings_np = model.encode(texts_with_prefix, batch_size=16, show_progress_bar=False)
             
             # Conversion numpy array -> list of floats
             embeddings_list = [emb.tolist() for emb in embeddings_np]
@@ -108,10 +108,13 @@ def process_nlp_pipeline(df):
     from pyspark.sql.functions import sha2, concat_ws
     df_exploded = df_exploded.withColumn("chunk_id", sha2(concat_ws("_", col("record_id"), col("chunk_text")), 256))
     
-    # 3. Vectorisation des chunks en parallèle (Limité à 2 workers pour éviter le crash RAM / OOM-Killer)
-    # Avec local[*], Spark lance autant de workers que de cœurs CPU. 
-    # repartition(2) force Spark à ne charger que 2 instances du modèle e5-small (2 x 470 Mo = 940 Mo de RAM)
-    df_vectorized = df_exploded.repartition(2).withColumn("embedding", generate_embeddings_udf(col("chunk_text")))
+    # 3. Vectorisation des chunks en parallèle
+    # Utilisation dynamique de tous les cœurs alloués par Spark (local[*]) au lieu d'une limite fixe de 2.
+    from pyspark.sql import SparkSession
+    spark = SparkSession.getActiveSession()
+    cores = spark.sparkContext.defaultParallelism if spark else 4
+    
+    df_vectorized = df_exploded.repartition(cores).withColumn("embedding", generate_embeddings_udf(col("chunk_text")))
     
     # On retire la colonne temporaire 'chunks' du DF principal pour ne pas l'alourdir
     df_main = df_with_chunks.drop("chunks")
