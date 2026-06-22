@@ -34,6 +34,8 @@ def get_spark_session(app_name: str) -> SparkSession:
     return SparkSession.builder \
         .appName(app_name) \
         .config("spark.executorEnv.PYTHONPATH", "/app") \
+        .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+        .config("spark.sql.execution.arrow.maxRecordsPerBatch", "2000") \
         .getOrCreate()
 
 def main():

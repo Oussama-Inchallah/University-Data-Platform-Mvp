@@ -81,7 +81,7 @@ with DAG(
             "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
         },
-        driver_memory="2g",
+        driver_memory="1g",
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
@@ -107,7 +107,7 @@ with DAG(
             "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
         },
-        driver_memory="2g",
+        driver_memory="1g",
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
