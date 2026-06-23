@@ -130,7 +130,7 @@ class StorageRouter:
                 if path_parts:
                     dir_prefix = "_".join(path_parts)
                     file_name = f"{dir_prefix}_{file_name}"
-                    storage_path = f"{domain_prefix}/year={now.year:04d}/month={now.month:02d}/day={now.day:02d}/{file_name}"
+                    storage_path = f"{domain_prefix}/{date_path}/{file_name}"
                     object_name = storage_path
         except S3Error as e:
             if e.code != 'NoSuchKey':
