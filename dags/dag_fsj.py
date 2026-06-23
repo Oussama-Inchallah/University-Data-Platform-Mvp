@@ -80,6 +80,7 @@ with DAG(
             "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
             "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
+            "hive.metastore.uris": "thrift://hive-metastore:9083",
         },
         driver_memory="1g",
         verbose=True,
@@ -106,11 +107,33 @@ with DAG(
             "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
             "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
+            "hive.metastore.uris": "thrift://hive-metastore:9083",
         },
         driver_memory="1g",
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
 
-    # ---- Pipeline Medallion : Ingestion -> Silver -> Gold ----
-    ingestion_task >> silver_hudi_task >> gold_search_task
+    # Zone Analytique : Hive Metastore Sync
+    sync_catalog_task = SparkSubmitOperator(
+        task_id='sync_hudi_to_hive_metastore',
+        conn_id='spark_gold',
+        application='/app/processing/jobs/sync_hudi_catalog.py',
+        name=f"sync_catalog_{UNIVERSITY_ID}",
+        conf={
+            "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+            "spark.hadoop.fs.s3a.access.key": "minioadmin",
+            "spark.hadoop.fs.s3a.secret.key": "minioadmin",
+            "spark.hadoop.fs.s3a.path.style.access": "true",
+            "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+            "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
+            "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
+            "hive.metastore.uris": "thrift://hive-metastore:9083",
+        },
+        driver_memory="512m",
+        verbose=True,
+    )
+
+    # ---- Pipeline Medallion : Ingestion -> Silver -> Gold -> Analytics ----
+    ingestion_task >> silver_hudi_task >> gold_search_task >> sync_catalog_task
