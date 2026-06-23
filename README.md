@@ -103,6 +103,24 @@ sequenceDiagram
     Spark->>Qdrant: Indexation Vectorielle à 384 dimensions (RAG)
 ```
 
+### Flux 4 : Zone Catalogue (Synchronisation SQL)
+Afin d'exposer les données du Data Lakehouse aux analystes et à l'outil de Business Intelligence (Metabase), un processus de synchronisation agit comme pont entre MinIO et le dictionnaire Hive. L'architecture utilise des **tables globales unifiées** (ex: `course_catalog`), où les données de chaque faculté deviennent de simples **partitions physiques** (ex: `FSAC/`, `FSTM/`).
+```mermaid
+sequenceDiagram
+    participant Airflow as Airflow DAG
+    participant Spark as Script Sync
+    participant MinIO as MinIO (Zone Curated)
+    participant Hive as Hive Metastore
+    participant Metabase as Metabase BI
+    
+    Airflow->>Spark: Lancement à la fin de l'ingestion
+    Spark->>MinIO: Liste les tables Hudi existantes
+    Spark->>Hive: CREATE TABLE IF NOT EXISTS
+    Note over Spark,Hive: Déclaration de la table globale (Idempotent)
+    Metabase->>Hive: Lecture du catalogue SQL
+    Hive-->>Metabase: Tables disponibles (avec toutes les partitions)
+```
+
 ---
 
 ## 🛠️ Stack Technique & Optimisations Récentes
