@@ -224,6 +224,31 @@ services:
       - JAVA_OPTS=-Xmx512m
     restart: unless-stopped
 
+  search-api:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: search-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../../src:/app/src
+    depends_on:
+      - elasticsearch
+      - qdrant
+
+  frontend:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.frontend
+    container_name: streamlit-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ../../src:/app/src
+    depends_on:
+      - search-api
+
 volumes:
   metabase-data:
   postgres-data:
