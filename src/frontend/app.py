@@ -1,11 +1,22 @@
 import streamlit as st
 import requests
 import json
+import os
 from datetime import datetime
 
 # URL de l'API (nom du service docker)
-API_URL = "http://search-api:8000"
+API_URL = os.getenv("API_URL", "http://search-api:8000")
 ES_URL = "http://elasticsearch:9200"
+
+@st.cache_data(ttl=60)
+def get_faculties():
+    try:
+        response = requests.get(f"{API_URL}/faculties")
+        response.raise_for_status()
+        data = response.json()
+        return ["Toutes"] + data.get("faculties", [])
+    except Exception:
+        return ["Toutes", "FSAC", "FSJESAC", "FSTM"] # Fallback statique
 
 st.set_page_config(
     page_title="University Data Platform",
@@ -41,8 +52,15 @@ with tab1:
                     data = response.json()
                     
                     results = data.get("results", [])
+                    llm_answer = data.get("llm_answer")
+                    
+                    if llm_answer:
+                        st.info("💡 **Réponse de l'IA :**")
+                        st.write(llm_answer)
+                        st.divider()
+                        
                     if results:
-                        st.success(f"Voici les {len(results)} paragraphes les plus pertinents trouvés dans la base de connaissances :")
+                        st.success(f"Voici les {len(results)} sources utilisées par l'IA pour générer cette réponse :")
                         for i, res in enumerate(results):
                             with st.expander(f"📚 Source {i+1} (Pertinence: {res.get('score', 0):.2f}) - {res.get('faculty', 'Inconnu')}"):
                                 st.markdown(f"**Texte extrait :**\n\n> {res.get('text', '')}")
@@ -64,23 +82,29 @@ with tab2:
     with col1:
         query_kw = st.text_input("Mots-clés :", placeholder="Ex: informatique", key="kw_input")
     with col2:
-        # Simulation de Facettes (filtres)
-        faculty_filter = st.selectbox("Faculté :", ["Toutes", "FSAC", "FSJESAC", "FSTM"])
+        # Liste dynamique des facultés
+        faculty_filter = st.selectbox("Faculté :", get_faculties())
     
     if st.button("Rechercher", key="btn_kw"):
         if query_kw:
             with st.spinner("Recherche en cours..."):
                 try:
-                    response = requests.get(f"{API_URL}/search/keyword", params={"q": query_kw})
+                    params = {"q": query_kw}
+                    if faculty_filter != "Toutes":
+                        params["faculty"] = faculty_filter
+                        
+                    response = requests.get(f"{API_URL}/search/keyword", params=params)
                     response.raise_for_status()
                     data = response.json()
                     
                     results = data.get("results", [])
                     total = data.get("total_hits", 0)
+                    facets = data.get("facets", [])
                     
-                    # Application du filtre localement pour l'exemple
-                    if faculty_filter != "Toutes":
-                        results = [r for r in results if r.get('faculty') == faculty_filter]
+                    # Construction du texte pour les facettes
+                    facets_text = " | ".join([f"{f['key']} ({f['doc_count']})" for f in facets])
+                    if facets_text:
+                        st.caption(f"Répartition des résultats : {facets_text}")
                     
                     st.success(f"{total} documents trouvés (Affichage des 10 meilleurs).")
                     
