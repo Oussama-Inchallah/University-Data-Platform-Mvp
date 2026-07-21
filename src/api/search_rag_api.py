@@ -34,48 +34,142 @@ except Exception as e:
 def read_root():
     return {"status": "ok", "message": "Search & RAG API is running"}
 
+@app.get("/faculties")
+def get_faculties():
+    """
+    Récupère la liste dynamique de toutes les facultés existantes dans la base.
+    """
+    try:
+        body = {
+            "size": 0,
+            "aggs": {
+                "faculties": {
+                    "terms": {
+                        "field": "source_system.keyword",
+                        "size": 100
+                    }
+                }
+            }
+        }
+        response = es_client.search(index="university_content", body=body)
+        buckets = response.get("aggregations", {}).get("faculties", {}).get("buckets", [])
+        faculties = [b["key"] for b in buckets]
+        return {"faculties": faculties}
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des facultés : {e}")
+        return {"faculties": []}
+
 @app.get("/search/keyword")
-def search_keyword(q: str = Query(..., description="Le mot-clé à rechercher")):
+def search_keyword(
+    q: str = Query(..., description="Le mot-clé à rechercher"),
+    faculty: str = Query(None, description="Filtrer par faculté")
+):
     """
     Recherche lexicale (Mots-clés purs) via Elasticsearch.
-    Recherche dans le titre et le contenu normalisé.
+    Recherche améliorée : multi-champs pondérés, recherche de phrase exacte, mise en évidence et facettes.
     """
     try:
         body = {
             "query": {
-                "multi_match": {
-                    "query": q,
-                    "fields": ["normalized_text"],
-                    "fuzziness": "AUTO"
+                "bool": {
+                    "must": [
+                        {
+                            "multi_match": {
+                                "query": q,
+                                "fields": ["title^3", "url^2", "normalized_text", "raw_content"],
+                                "fuzziness": "AUTO",
+                                "type": "best_fields"
+                            }
+                        }
+                    ],
+                    "should": [
+                        {
+                            "match_phrase": {
+                                "normalized_text": {
+                                    "query": q,
+                                    "slop": 2,
+                                    "boost": 2.0
+                                }
+                            }
+                        }
+                    ]
+                }
+            },
+            "highlight": {
+                "fields": {
+                    "normalized_text": {
+                        "fragment_size": 150,
+                        "number_of_fragments": 2,
+                        "pre_tags": ["<mark>"],
+                        "post_tags": ["</mark>"]
+                    }
+                }
+            },
+            "aggs": {
+                "faculties": {
+                    "terms": {
+                        "field": "source_system.keyword"
+                    }
                 }
             },
             "size": 10
         }
+        
+        if faculty and faculty != "Toutes":
+            body["query"]["bool"]["filter"] = [
+                {"term": {"source_system.keyword": faculty}}
+            ]
         
         response = es_client.search(index="university_content", body=body)
         
         results = []
         for hit in response["hits"]["hits"]:
             src = hit["_source"]
+            
+            # Récupération du highlight s'il existe, sinon on prend le début du texte
+            highlights = hit.get("highlight", {})
+            snippet = " ... ".join(highlights.get("normalized_text", []))
+            if not snippet:
+                snippet = src.get("normalized_text", "")[:200] + "..."
+
             results.append({
                 "score": hit["_score"],
                 "type": src.get("entity_type", "Document"),
-                "snippet": src.get("normalized_text", "")[:300] + "...",
+                "snippet": snippet,
+                "title": src.get("title", "Sans titre"),
                 "faculty": src.get("source_system", "Unknown"),
                 "language": src.get("language", "Unknown")
             })
             
-        return {"query": q, "total_hits": response["hits"]["total"]["value"], "results": results}
+        facets = response.get("aggregations", {}).get("faculties", {}).get("buckets", [])
+            
+        return {
+            "query": q, 
+            "total_hits": response["hits"]["total"]["value"], 
+            "results": results,
+            "facets": facets
+        }
         
     except Exception as e:
         logger.error(f"Erreur Elasticsearch : {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+import os
+import google.generativeai as genai
+
+# Configuration de Gemini
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+    gemini_model = genai.GenerativeModel('gemini-3.1-flash-lite')
+else:
+    gemini_model = None
+
 @app.get("/search/semantic")
 def search_semantic(q: str = Query(..., description="La question en langage naturel")):
     """
-    Recherche Sémantique (Vectorielle) via Qdrant.
-    Génère l'embedding de la question puis trouve les chunks les plus proches.
+    Recherche Sémantique (Vectorielle) via Qdrant avec Génération RAG (Gemini).
+    Génère l'embedding de la question, trouve les chunks les plus proches, puis génère une réponse.
     """
     try:
         # e5-small requiert le préfixe "query: " pour les requêtes
@@ -84,7 +178,7 @@ def search_semantic(q: str = Query(..., description="La question en langage natu
         # Encodage de la question
         query_vector = model.encode(formatted_query).tolist()
         
-        # Recherche dans Qdrant (on demande plus de résultats pour pouvoir dédupliquer)
+        # Recherche dans Qdrant
         search_result = qdrant_client.search(
             collection_name="university_chunks",
             query_vector=query_vector,
@@ -95,6 +189,11 @@ def search_semantic(q: str = Query(..., description="La question en langage natu
         seen_texts = set()
         
         for hit in search_result:
+            # --- Seuil intelligent (Option B) ---
+            # On ignore les chunks dont la pertinence sémantique est trop faible
+            if hit.score < 0.82:
+                continue
+                
             payload = hit.payload or {}
             text = payload.get("chunk_text", "").strip()
             
@@ -111,11 +210,105 @@ def search_semantic(q: str = Query(..., description="La question en langage natu
                 "source_table": payload.get("target_table", "")
             })
             
-            # On s'arrête dès qu'on a 5 résultats uniques
-            if len(results) >= 5:
+            # Limite haute de sécurité pour les résultats Qdrant
+            if len(results) >= 7:
                 break
+                
+        # --- RECHERCHE HYBRIDE (Mots-clés via Elasticsearch) ---
+        try:
+            import re
+            quoted_terms = re.findall(r'"([^"]+)"', q)
             
-        return {"query": q, "results": results}
+            must_clauses = [
+                {
+                    "multi_match": {
+                        "query": q,
+                        "fields": ["normalized_text^2", "raw_content"]
+                    }
+                }
+            ]
+            
+            # Forcer la présence des mots entre guillemets
+            for term in quoted_terms:
+                must_clauses.append({
+                    "match_phrase": {
+                        "normalized_text": term
+                    }
+                })
+                
+            es_body = {
+                "query": {
+                    "bool": {
+                        "must": must_clauses
+                    }
+                },
+                "size": 5,
+                "highlight": {
+                    "fields": {
+                        "normalized_text": {
+                            "fragment_size": 300,
+                            "number_of_fragments": 10
+                        }
+                    },
+                    "pre_tags": [""],
+                    "post_tags": [""]
+                }
+            }
+            es_response = es_client.search(index="university_content", body=es_body)
+            es_hits = es_response.get("hits", {}).get("hits", [])
+            for hit in es_hits:
+                src = hit.get("_source", {})
+                
+                # Si on a des extraits pertinents (Highlighting), on les utilise pour ne pas envoyer tout le gros document
+                highlights = hit.get("highlight", {}).get("normalized_text", [])
+                if highlights:
+                    text = " ... ".join(highlights)
+                else:
+                    text = src.get("normalized_text", "").strip()[:2000]
+                    
+                if not text or text in seen_texts:
+                    continue
+                seen_texts.add(text)
+                
+                results.append({
+                    "score": 1.0 + (hit.get("_score", 0) / 50.0), # Boost pour garantir le top classement
+                    "text": text,
+                    "url": src.get("url", ""),
+                    "faculty": src.get("source_system", "Unknown"),
+                    "source_table": "Elasticsearch"
+                })
+        except Exception as e:
+            logger.error(f"Erreur lors de la recherche hybride Elasticsearch : {e}")
+            
+        # Trier par score (ES > 1.0 passera devant Qdrant qui est < 1.0)
+        # et limiter à 10 pour le LLM
+        results = sorted(results, key=lambda x: x['score'], reverse=True)[:10]
+                
+        # --- GENERATION RAG ---
+        llm_answer = None
+        if gemini_model and results:
+            context_text = "\n\n---\n\n".join([f"Source ({r['faculty']}): {r['text']}" for r in results])
+            prompt = f"""Tu es l'assistant IA officiel de l'université.
+Utilise UNIQUEMENT le contexte ci-dessous pour répondre à la question de l'étudiant. 
+Si la réponse ne se trouve pas dans le contexte, dis poliment que tu ne sais pas, sans inventer d'information.
+Fais une réponse claire, structurée et professionnelle.
+
+Contexte extrait de la base de connaissances :
+{context_text}
+
+Question de l'étudiant : {q}
+Réponse :"""
+            
+            try:
+                response = gemini_model.generate_content(prompt)
+                llm_answer = response.text
+            except Exception as e:
+                logger.error(f"Erreur lors de la génération LLM : {e}")
+                llm_answer = "Erreur lors de la génération de la réponse par l'IA."
+        elif not gemini_model:
+            llm_answer = "Génération RAG désactivée car la clé GEMINI_API_KEY n'est pas configurée."
+            
+        return {"query": q, "results": results, "llm_answer": llm_answer}
         
     except Exception as e:
         logger.error(f"Erreur Qdrant/Embedding : {e}")
