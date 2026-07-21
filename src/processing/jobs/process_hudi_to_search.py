@@ -87,6 +87,11 @@ def main():
         return
         
     df_enriched = df_union
+    
+    # Dédoublonnage par contenu (Protection finale contre les doublons historiques dans Hudi)
+    logger.info("Dropping duplicates based on content_hash before Search Indexing...")
+    df_enriched = df_enriched.dropDuplicates(["content_hash"])
+    
     df_enriched.cache()
     total_docs = df_enriched.count()
     
