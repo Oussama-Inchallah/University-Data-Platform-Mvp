@@ -150,6 +150,11 @@ def main():
     # -----------------------------------------------------------
     # Break lineage to prevent Spark from re-executing UDF logic.
     # ============================================================
+    
+    # Dédoublonnage par contenu (Evite de stocker N fois la même page scannée sous des URLs différentes)
+    logger.info("Dropping duplicates based on content_hash...")
+    df_enriched = df_enriched.dropDuplicates(["content_hash"])
+    
     checkpoint_path = f"s3a://curated-zone/_tmp_checkpoint_{source_system}"
     logger.info(f"Writing checkpoint to {checkpoint_path}...")
     
