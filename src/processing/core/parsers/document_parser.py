@@ -56,7 +56,10 @@ def extract_document_from_minio(bucket: str, path: str) -> Dict[str, str]:
         os.environ['TIKA_SERVER_ENDPOINT'] = 'http://tika:9998'
         
         from tika import parser
-        parsed = parser.from_buffer(binary_data)
+        headers = {
+            "X-Tika-PDFOcrStrategy": "ocr_and_text"
+        }
+        parsed = parser.from_buffer(binary_data, headers=headers)
         
         # Libération immédiate de la mémoire binaire
         del binary_data
