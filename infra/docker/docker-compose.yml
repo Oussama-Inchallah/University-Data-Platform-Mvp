@@ -28,6 +28,8 @@ x-airflow-common: &airflow-common
     GEMINI_API_KEY: ${GEMINI_API_KEY:-""}
     TIKA_CLIENT_ONLY: 'True'
     TIKA_SERVER_ENDPOINT: 'http://tika:9998'
+    HF_HUB_OFFLINE: '1'
+    HF_HOME: '/opt/airflow/.cache/huggingface'
   volumes:
     - ../../src:/opt/airflow/src
     - ../../src:/app
@@ -168,6 +170,25 @@ services:
       - hive-metastore-data:/var/lib/postgresql/data
     restart: always
 
+  hive-metastore-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.hive
+    container_name: hive-metastore-init
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      SERVICE_OPTS: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-metastore-db:5432/metastore_db -Djavax.jdo.option.ConnectionUserName=hive -Djavax.jdo.option.ConnectionPassword=hivepassword"
+    depends_on:
+      - hive-metastore-db
+    entrypoint: ["bash", "-c"]
+    command: >
+      "
+      export HADOOP_CLIENT_OPTS=\"-Xmx1G $$SERVICE_OPTS\";
+      echo 'Checking Hive Metastore schema...';
+      /opt/hive/bin/schematool -dbType postgres -info || (echo 'Initializing schema...' && /opt/hive/bin/schematool -dbType postgres -initSchema)
+      "
+
   hive-metastore:
     build:
       context: .
@@ -183,7 +204,10 @@ services:
     volumes:
       - ./hive-core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
     depends_on:
-      - hive-metastore-db
+      hive-metastore-db:
+        condition: service_started
+      hive-metastore-init:
+        condition: service_completed_successfully
 
   spark-thrift-server:
     build:
@@ -233,6 +257,7 @@ services:
       - "8000:8000"
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY:-""}
+      - HF_HUB_OFFLINE=1
     volumes:
       - ../../src:/app/src
     depends_on:
