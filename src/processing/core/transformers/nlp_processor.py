@@ -59,9 +59,24 @@ def generate_embeddings_udf(iterator: Iterator[pd.Series]) -> Iterator[pd.Series
         return
         
     # Initialisation du modèle (exécuté 1 seule fois par worker)
-    # Le modèle sera téléchargé la première fois et mis en cache dans ~/.cache/huggingface
-    model = SentenceTransformer("intfloat/multilingual-e5-small")
+    # Le modèle a DÉJÀ été téléchargé lors du `docker build` (voir Dockerfile ligne 73-75).
+    # On force HuggingFace à fonctionner en mode HORS-LIGNE strict pour empêcher toute requête réseau 
+    # de vérification de version. Cela garantit 0 ms de latence réseau et empêche les erreurs de connexion.
+    import os
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["HF_HOME"] = "/opt/airflow/.cache/huggingface"
     
+    import time
+    model = None
+    for attempt in range(5):
+        try:
+            # En mode offline, cela lit instantanément depuis le disque
+            model = SentenceTransformer("intfloat/multilingual-e5-small")
+            break
+        except Exception as e:
+            if attempt == 4:
+                raise Exception(f"Impossible de charger le modèle NLP depuis le cache local: {e}")
+            time.sleep(1)
     for series in iterator:
         # Remplacer les valeurs nulles par des chaînes vides
         texts_list = [str(t) if t else "empty" for t in series]
