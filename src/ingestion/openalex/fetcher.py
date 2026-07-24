@@ -36,6 +36,9 @@ class OpenAlexFetcher:
         
         self.logger.info(f"Starting OpenAlex ingestion for institution: {institution_id}")
         
+        # Build memory index to prevent redownloading existing files in future DAG runs
+        self.storage.build_memory_index(f"openalex/{institution_id}", ["raw-json"])
+        
         while cursor:
             params = {
                 "filter": f"institutions.id:{institution_id}",

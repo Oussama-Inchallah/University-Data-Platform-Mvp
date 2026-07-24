@@ -8,12 +8,32 @@ les fichiers bruts pour les stocker dans la zone 'raw' de MinIO.
 import os
 import re
 import logging
+import time
+import json
+import hashlib
+import socket
+from typing import List, Set, Dict, Optional, Tuple
 import requests
 import urllib3
 from bs4 import BeautifulSoup
 from collections import deque
 from urllib.parse import urljoin, urlparse
 from src.ingestion.crawler.storage import StorageRouter
+
+# ==============================================================================
+# WORKAROUND DOCKER IPv6 "Network is unreachable" [Errno 101]
+# Docker ne route pas l'IPv6 par défaut. Si le DNS retourne une adresse IPv6, 
+# la librairie requests échoue au lieu de tester l'IPv4. 
+# Ce patch force Python à n'utiliser que l'IPv4 (AF_INET) pour toutes les requêtes.
+# ==============================================================================
+old_getaddrinfo = socket.getaddrinfo
+def new_getaddrinfo(*args, **kwargs):
+    responses = old_getaddrinfo(*args, **kwargs)
+    # Garder uniquement les résolutions IPv4 (socket.AF_INET = 2)
+    return [response for response in responses if response[0] == socket.AF_INET]
+socket.getaddrinfo = new_getaddrinfo
+# ==============================================================================
+
 from playwright.sync_api import sync_playwright
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -74,6 +94,17 @@ def is_useful_content_type(ct: str) -> bool:
     blacklist = ['text/html', 'text/css', 'javascript', 'font', 'x-empty']
     return not any(b in ct for b in blacklist)
 
+def is_valid_size(content_bytes: bytes, content_type: str) -> bool:
+    """Filtre les fichiers trop petits (corrompus, vides ou pixels de tracking)"""
+    size = len(content_bytes)
+    ct = content_type.lower()
+    if "pdf" in ct or "word" in ct or "officedocument" in ct:
+        return size > 5120  # > 5 KB
+    elif "image" in ct:
+        return size > 15360 # > 15 KB
+    else:
+        return size > 100   # > 100 bytes pour HTML/JSON
+
 class DynamicFetcher:
     def __init__(self, user_agent: str = "Mozilla/5.0", request_timeout: int = 30, retry_count: int = 3):
         self.logger = logging.getLogger(__name__)
@@ -81,7 +112,7 @@ class DynamicFetcher:
         self.request_timeout = request_timeout
         self.retry_count = retry_count
 
-    def fetch(self, url: str, is_allowed_domain: bool = True, on_resource=None) -> tuple[bytes, str, str]:
+    def fetch(self, url: str, is_allowed_domain: bool = True, on_resource=None, storage_router=None) -> tuple[bytes, str, str, str, str]:
         self.logger.info(f"Fetching: {url}")
         headers = {"User-Agent": self.user_agent}
         last_error = None
@@ -103,26 +134,59 @@ class DynamicFetcher:
                     # Ainsi, on récupère TOUS les documents externes (S3, Supabase) sans crawler d'autres sites.
                     if not is_allowed_domain and 'text/html' in content_type:
                         self.logger.debug(f"Ignoring external HTML page: {url}")
-                        return None, None, None
+                        return None, None, None, None, None
                         
-                    content = response.content
+                    etag = response.headers.get('ETag', '').strip('"')
+                    last_modified = response.headers.get('Last-Modified', '')
                     final_url = response.url
+                    
+                    # Logique de SKIP pour les fichiers binaires (stream=True ne télécharge pas encore le body)
+                    if 'text/html' not in content_type and storage_router:
+                        existing_meta = storage_router.get_existing_metadata(final_url, content_type)
+                        if etag and existing_meta.get('server_etag') == etag:
+                            self.logger.info(f"Skipping download for {url} (ETag match).")
+                            return b"SKIPPED", content_type, final_url, etag, last_modified
+                            
+                    # Limite de taille (100 MB)
+                    max_size = 100 * 1024 * 1024
+                    content_length_str = response.headers.get('Content-Length')
+                    if content_length_str and content_length_str.isdigit():
+                        if int(content_length_str) > max_size:
+                            self.logger.warning(f"File too large ({content_length_str} bytes), skipping: {url}")
+                            return b"SKIPPED_SIZE", content_type, final_url, etag, last_modified
+                            
+                    content_chunks = []
+                    downloaded_size = 0
+                    for chunk in response.iter_content(chunk_size=8192):
+                        if chunk:
+                            content_chunks.append(chunk)
+                            downloaded_size += len(chunk)
+                            if downloaded_size > max_size:
+                                self.logger.warning(f"File exceeded max size ({max_size} bytes) during stream, skipping: {url}")
+                                return b"SKIPPED_SIZE", content_type, final_url, etag, last_modified
+                                
+                    content = b"".join(content_chunks)
+                    
+                    if not is_valid_size(content, content_type):
+                        self.logger.warning(f"File too small ({len(content)} bytes) for {content_type}, skipping: {url}")
+                        return b"SKIPPED_SIZE", content_type, final_url, etag, last_modified
                 
                 # Si c'est un document (pdf, doc, img), on n'a pas besoin de Playwright
                 if 'text/html' not in content_type:
-                    return content, content_type, final_url
+                    return content, content_type, final_url, etag, last_modified
                 
                 if self._needs_playwright(content, content_type, url):
                     self.logger.info(f"Dynamic content detected for {url}. Using Playwright.")
-                    return self._fetch_playwright(url, on_resource)
+                    c, ct, furl = self._fetch_playwright(url, on_resource)
+                    return c, ct, furl, etag, last_modified
                 
-                return content, content_type, final_url
+                return content, content_type, final_url, etag, last_modified
                 
             except requests.exceptions.HTTPError as e:
                 # Si c'est une 404 (Lien mort), ça ne sert à rien de réessayer ou de lancer Playwright
                 if e.response is not None and e.response.status_code == 404:
                     self.logger.warning(f"Broken link (404 Not Found) for {url}. Skipping.")
-                    return None, None, None
+                    return None, None, None, None, None
                 last_error = e
                 self.logger.warning(f"Attempt {attempt+1}/{current_retries} failed for {url} via Requests (HTTPError): {e}")
             except requests.exceptions.RequestException as e:
@@ -131,7 +195,7 @@ class DynamicFetcher:
                 # on abandonne immédiatement pour économiser 3 retries et 1 fallback Playwright.
                 if "NameResolutionError" in error_str or "Network is unreachable" in error_str:
                     self.logger.warning(f"Fast failing on deep network error for {url}: {error_str}")
-                    return None, None, None
+                    return None, None, None, None, None
                     
                 last_error = e
                 self.logger.warning(f"Attempt {attempt+1}/{current_retries} failed for {url} via Requests: {e}")
@@ -140,11 +204,12 @@ class DynamicFetcher:
         # MAIS uniquement pour les domaines internes ! Pour les liens externes (S3, autres sites), on abandonne.
         if not is_allowed_domain:
             self.logger.warning(f"All requests retries failed for external URL {url}. Skipping Playwright fallback.")
-            return None, None, None
+            return None, None, None, None, None
             
         self.logger.warning(f"All requests retries failed for {url}. Falling back to Playwright.")
         try:
-            return self._fetch_playwright(url, on_resource)
+            c, ct, furl = self._fetch_playwright(url, on_resource)
+            return c, ct, furl, "", ""
         except Exception as e:
             self.logger.error(f"Playwright fallback also failed for {url}: {e}")
             raise last_error or e
@@ -205,7 +270,7 @@ class DynamicFetcher:
                     # Ne capturer QUE les contenus utiles (JSON API, documents, images, médias)
                     if is_useful_content_type(ct):
                         body = response.body()
-                        if len(body) > 100:  # Ignorer les réponses vides ou minuscules
+                        if is_valid_size(body, ct):
                             on_resource(response.url, body, ct)
                 except Exception:
                     pass
@@ -224,6 +289,20 @@ class DynamicFetcher:
                 # on continue quand même. Le DOM de base est déjà garanti d'être chargé.
                 self.logger.info(f"SPA background connections still active for {url}. Proceeding with loaded DOM.")
                 response = None
+                
+            # --- NOUVEAU : Auto-Scroll (Limité) ---
+            try:
+                max_scrolls = 50
+                for _ in range(max_scrolls):
+                    previous_height = page.evaluate("document.body.scrollHeight")
+                    page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+                    page.wait_for_timeout(500) # Wait 500ms for lazy load
+                    new_height = page.evaluate("document.body.scrollHeight")
+                    if new_height == previous_height:
+                        break # Reached the bottom
+            except Exception as e:
+                self.logger.warning(f"Error during auto-scroll on {url}: {e}")
+            # --------------------------------------
             
             # Attendre un court instant supplémentaire pour laisser le rendu React se stabiliser si besoin
             page.wait_for_timeout(2000)
@@ -294,13 +373,16 @@ class GenericCrawler:
             for el in soup.find_all(tag, **{attr: True}):
                 process_url(el[attr], is_resource=True)
                 
-        # 3. Attributs data-* qui ressemblent à des URLs utiles
-        url_pattern = re.compile(r'^https?://')
+        # 3. Attributs data-* et onclick qui ressemblent à des URLs utiles
+        # Regex pour trouver une URL absolue (http...) ou un chemin relatif vers un fichier
+        url_pattern = re.compile(r'(https?://[^\s"\'\\,\[\]{}<>]+|/[a-zA-Z0-9_\-\./]+\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx|png|jpg|jpeg|json))', re.IGNORECASE)
         for el in soup.find_all(True):
             for attr, value in el.attrs.items():
-                if attr.startswith('data-') and isinstance(value, str) and url_pattern.match(value):
-                    if not is_junk_url(value):
-                        process_url(value, is_resource=True)
+                if isinstance(value, str) and ('url' in attr or 'href' in attr or 'link' in attr or attr == 'onclick' or attr.startswith('data-')):
+                    matches = url_pattern.findall(value)
+                    for match in matches:
+                        if not is_junk_url(match):
+                            process_url(match, is_resource=True)
 
         # Déduplication tout en gardant l'ordre
         seen = set()
@@ -314,8 +396,9 @@ class GenericCrawler:
     def _extract_urls_from_json(self, content: bytes, parent_url: str, depth: int, node_id: str, queue: deque, visited: set):
         try:
             content_str = content.decode('utf-8', errors='ignore')
-            urls_in_json = re.findall(r'https?://[^\s"\'\\,\[\]{}]+', content_str)
-            for idx, new_url in enumerate(urls_in_json):
+            urls_in_json = re.findall(r'(https?://[^\s"\'\\,\[\]{}<>]+|/[a-zA-Z0-9_\-\./]+\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx|png|jpg|jpeg|json))', content_str, re.IGNORECASE)
+            for idx, raw_url in enumerate(urls_in_json):
+                new_url = urljoin(parent_url, raw_url)
                 if new_url in visited:
                     continue
                 # On met en file d'attente TOUTES les URLs du JSON.
@@ -350,6 +433,9 @@ class GenericCrawler:
         import json
         
         domain_prefix = urlparse(self.seed_url).netloc
+        
+        # Construire l'index mémoire des fichiers existants dans MinIO
+        self.storage_router.build_memory_index(domain_prefix, ["raw-web-html", "raw-documents", "raw-images", "raw-json"])
         
         while queue:
             url, depth, node_id, parent_url = queue.popleft()
@@ -410,24 +496,30 @@ class GenericCrawler:
                     time.sleep(self.crawl_delay)
                     
                 is_internal = self._is_allowed(url)
-                res = self.fetcher.fetch(url, is_allowed_domain=is_internal, on_resource=on_intercepted_resource)
-                if res == (None, None, None):
+                res = self.fetcher.fetch(url, is_allowed_domain=is_internal, on_resource=on_intercepted_resource, storage_router=self.storage_router)
+                if res[0] is None:
                     stats["ignored"] += 1
                     stats["urls_ignored"].append(url)
                     continue
-                content, content_type, final_url = res
+                content, content_type, final_url, etag, last_modified = res
                 
-                uploaded = self.storage_router.upload_to_minio(
-                    url=final_url, 
-                    content=content, 
-                    content_type=content_type, 
-                    node_id=node_id, 
-                    university_id=self.university_id,
-                    domain_prefix=domain_prefix,
-                    depth=depth,
-                    parent_url=parent_url,
-                    http_status=200
-                )
+                if content == b"SKIPPED":
+                    uploaded = False
+                    content = b"" # Reset for extract_links safety although we won't extract links from binaries
+                else:
+                    uploaded = self.storage_router.upload_to_minio(
+                        url=final_url, 
+                        content=content, 
+                        content_type=content_type, 
+                        node_id=node_id, 
+                        university_id=self.university_id,
+                        domain_prefix=domain_prefix,
+                        depth=depth,
+                        parent_url=parent_url,
+                        http_status=200,
+                        server_etag=etag,
+                        server_last_modified=last_modified
+                    )
                 
                 stats["pages_crawled"] += 1
                 stats["urls_crawled"].append(url)
