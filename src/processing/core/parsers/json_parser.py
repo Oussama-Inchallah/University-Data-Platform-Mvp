@@ -50,7 +50,30 @@ def extract_json_from_minio(bucket: str, path: str) -> List[Dict[str, str]]:
                 for item in obj:
                     strings.extend(extract_strings(item))
             elif isinstance(obj, str):
-                strings.append(obj)
+                s = obj.strip()
+                if not s:
+                    return strings
+                    
+                # Tentative de désérialisation si c'est un JSON stringifié (ex: "[{...}]")
+                if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
+                    try:
+                        inner_obj = json.loads(s)
+                        strings.extend(extract_strings(inner_obj))
+                        return strings
+                    except:
+                        pass
+                        
+                # Nettoyage des balises HTML si présentes (ex: "<h1 style=...>Texte</h1>")
+                if '<' in s and '>' in s:
+                    try:
+                        from bs4 import BeautifulSoup
+                        soup = BeautifulSoup(s, 'html.parser')
+                        s = soup.get_text(separator=' ', strip=True)
+                    except:
+                        pass
+                        
+                if s:
+                    strings.append(s)
             return strings
             
         def process_item(item_data, default_url=""):
@@ -64,7 +87,8 @@ def extract_json_from_minio(bucket: str, path: str) -> List[Dict[str, str]]:
             title = ""
             url = default_url
             if isinstance(item_data, dict):
-                title = item_data.get("title", item_data.get("name", item_data.get("display_name", "")))
+                # Ajout de 'titre' (très courant dans les API francophones/marocaines)
+                title = item_data.get("title", item_data.get("titre", item_data.get("name", item_data.get("display_name", ""))))
                 url = item_data.get("id", item_data.get("url", default_url))
                 
             return {"url": str(url), "title": str(title), "text": text}
