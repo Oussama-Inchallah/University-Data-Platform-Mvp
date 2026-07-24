@@ -119,10 +119,20 @@ def process_nlp_pipeline(df):
         explode(col("chunks")).alias("chunk_text")
     )
     
-    # Génération d'un sous-ID unique pour chaque chunk (hash du record_id + texte du chunk)
-    from pyspark.sql.functions import sha2, concat_ws
-    df_exploded = df_exploded.withColumn("chunk_id", sha2(concat_ws("_", col("record_id"), col("chunk_text")), 256))
-    
+    # Génération d'un sous-ID déterministe (UUID valide) pour chaque chunk (MD5 formaté en 8-4-4-4-12)
+    from pyspark.sql.functions import md5, concat_ws, expr
+    df_exploded = df_exploded.withColumn(
+        "chunk_md5", md5(concat_ws("_", col("record_id"), col("chunk_text")))
+    ).withColumn(
+        "id", 
+        concat_ws("-", 
+            expr("substring(chunk_md5, 1, 8)"),
+            expr("substring(chunk_md5, 9, 4)"),
+            expr("substring(chunk_md5, 13, 4)"),
+            expr("substring(chunk_md5, 17, 4)"),
+            expr("substring(chunk_md5, 21, 12)")
+        )
+    ).drop("chunk_md5", "chunk_id")    
     # 3. Vectorisation des chunks en parallèle
     # Utilisation dynamique de tous les cœurs alloués par Spark (local[*]) au lieu d'une limite fixe de 2.
     from pyspark.sql import SparkSession
