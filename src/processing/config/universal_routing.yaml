@@ -2,6 +2,10 @@
 input_bucket: "raw-web-html"
 
 entities:
+  # Règle pour les actualités (Placée en premier pour capturer "Avis", "Annonces", même s'ils parlent de Masters)
+  - target_table: "university_news"
+    url_pattern: "(?i).*actualites?|.*news|.*evenements?|.*events?|.*actus?|.*annonces?|.*announcements?|.*recrut.*|.*avis|.*notices?|.*presse|.*press|.*communications?|.*organigrammes?|.*presentations?|.*missions?|.*conseils?|.*councils?|.*helps?|.*partenariats?|.*partnerships?|.*testimonials?|.*index|.*accueil|.*home|.*خبر.*|.*إعلان.*|.*إخبار.*|.*حدث.*|.*صحافة.*|.*تواصل.*|.*تقديم.*|.*مهمة.*|.*مجلس.*|.*شراكة.*|.*استقبال.*|.*توظيف.*|.*مباراة.*|.*النتيجة.*|.*لائحة.*|.*المترشحين.*|.*دورة.*|.*مباريات.*"
+
   # Règle pour le catalogue de cours (Pédagogie)
   - target_table: "course_catalog"
     url_pattern: "(?i).*formations?|.*filieres?|.*departements?|.*departments?|.*cours?|.*modules?|.*initiales?|.*continues?|.*masters?|.*mst|.*lst|.*licences?|.*bachelors?|.*emplois?.*temps|.*schedules?|.*inscriptions?|.*enrollments?|.*registrations?|.*preinscriptions?|.*candidatures?|.*applications?|.*resultats?|.*results?|.*scholar.*|.*moodle.*|.*examens?|.*exams?|.*تكوين.*|.*مسلك.*|.*شعبة.*|.*درس.*|.*وحدة.*|.*أساسي.*|.*مستمر.*|.*ماستر.*|.*إجازة.*|.*تسجيل.*|.*نتيجة.*|.*جدول.*|.*أوقات.*|.*امتحان.*"
@@ -13,10 +17,6 @@ entities:
   # Règle pour les profils d'étudiants
   - target_table: "students_external_profiles"
     url_pattern: "(?i).*etudiants?|.*students?|.*alumnis?|.*laureats?|.*graduates?|.*vie.*|.*life.*|.*estudiantine.*|.*activites?|.*activities?|.*forums?|.*entreprises?|.*enterprises?|.*carrieres?|.*careers?|.*entrepreneurship.*|.*services?|.*espace_etu.*|.*طالب.*|.*خريج.*|.*حياة.*|.*طلابية.*|.*نشاط.*|.*منتدى.*|.*مقاولة.*|.*مهنة.*|.*خدمات.*"
-
-  # Règle pour les actualités
-  - target_table: "university_news"
-    url_pattern: "(?i).*actualites?|.*news|.*evenements?|.*events?|.*actus?|.*annonces?|.*announcements?|.*recrut.*|.*avis|.*notices?|.*presse|.*press|.*communications?|.*organigrammes?|.*presentations?|.*missions?|.*conseils?|.*councils?|.*helps?|.*partenariats?|.*partnerships?|.*testimonials?|.*index|.*accueil|.*home|.*خبر.*|.*إعلان.*|.*إخبار.*|.*حدث.*|.*صحافة.*|.*تواصل.*|.*تقديم.*|.*مهمة.*|.*مجلس.*|.*شراكة.*|.*استقبال.*|.*توظيف.*|.*مباراة.*|.*النتيجة.*|.*لائحة.*|.*المترشحين.*|.*دورة.*|.*مباريات.*"
 
   # Règle pour la recherche
   - target_table: "research_publications"
