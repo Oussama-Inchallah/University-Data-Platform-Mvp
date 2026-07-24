@@ -35,6 +35,8 @@ class HudiWriter:
             'hoodie.insert.shuffle.parallelism': 2,
             # Indexation de base
             'hoodie.index.type': 'BLOOM',
+            # Schema Evolution
+            'hoodie.datasource.write.reconcile.schema': 'true',
             # Configuration Hive Metastore (Optionnel, à ajuster si Hive est sécurisé)
             # 'hoodie.datasource.hive_sync.enable': 'true',
             # 'hoodie.datasource.hive_sync.database': 'default',
