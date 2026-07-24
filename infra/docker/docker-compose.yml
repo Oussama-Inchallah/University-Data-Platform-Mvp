@@ -152,7 +152,10 @@ services:
     restart: always
 
   tika:
-    image: apache/tika:latest
+    build:
+      context: .
+      dockerfile: Dockerfile.tika
+    container_name: docker-tika-1
     ports:
       - "9998:9998"
     restart: always
