@@ -45,12 +45,18 @@ class DataCleaner:
         return F.sha2(F.concat_ws("_", F.col(source_system_col), F.col(source_url_col)), 256)
 
     @staticmethod
-    def generate_content_hash(text_col: str):
+    def generate_content_hash(text_col: str, fallback_col: str = "record_id"):
         """
         Génère l'empreinte du contenu (content_hash) pour la déduplication.
-        Fonction 100% native Spark.
+        Si le texte est vide (ex: image sans OCR), utilise fallback_col (record_id)
+        pour éviter que tous les documents vides ne soient considérés comme des doublons !
         """
-        return F.sha2(F.col(text_col), 256)
+        return F.when(
+            (F.col(text_col).isNull()) | (F.length(F.trim(F.col(text_col))) == 0),
+            F.col(fallback_col)
+        ).otherwise(
+            F.sha2(F.col(text_col), 256)
+        )
         
     @staticmethod
     def clean_whitespaces(text_col: str):
