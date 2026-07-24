@@ -19,6 +19,7 @@ try:
     from processing.core.router import DynamicRouter
     from processing.core.parsers.html_parser import parse_html_udf
     from processing.core.parsers.document_parser import parse_document_udf
+    from processing.core.parsers.json_parser import parse_json_udf
     from processing.core.transformers.data_cleaner import DataCleaner, detect_language_udf
     from processing.core.writers.hudi_writer import HudiWriter
 except ImportError:
@@ -27,6 +28,7 @@ except ImportError:
     from processing.core.router import DynamicRouter
     from processing.core.parsers.html_parser import parse_html_udf
     from processing.core.parsers.document_parser import parse_document_udf
+    from processing.core.parsers.json_parser import parse_json_udf
     from processing.core.transformers.data_cleaner import DataCleaner, detect_language_udf
     from processing.core.writers.hudi_writer import HudiWriter
 
@@ -49,6 +51,7 @@ def main():
     parser.add_argument("--execution_date", required=True)
     parser.add_argument("--source_system", required=True)
     parser.add_argument("--domain_pattern", required=False)
+    parser.add_argument("--force_target_table", required=False, help="Bypass routing and force all records to this table")
     args = parser.parse_args()
 
     logger.info(f"Starting SILVER job (ZERO-OOM Architecture): {args.source_system}")
@@ -113,26 +116,98 @@ def main():
             logger.info("Document metadata loaded successfully.")
         except Exception as e:
             logger.info(f"No Document data found or skipped: {e}")
+
+        # --- Images (OCR via Tika) ---
+        df_images_normalized = None
+        if args.execution_date.lower() == "all":
+            base_json_images = f"s3a://raw-images/{domain_pattern}/year=*/month=*/day=*/*_metadata.json"
+        else:
+            base_json_images = f"s3a://raw-images/{domain_pattern}/year={year}/month={month}/day={day}/*_metadata.json"
+            
+        try:
+            df_meta_images = spark.read.option("multiLine", "true").json(base_json_images)
+            df_meta_images = df_meta_images.repartition(20)
+            
+            # On utilise le même document_parser_udf, car Tika gère nativement l'OCR des images
+            df_images_normalized = df_meta_images \
+                .withColumn("parsed_img", parse_document_udf(F.col("storage_bucket"), F.col("storage_path"))) \
+                .withColumn("title_tika", F.col("parsed_img.title")) \
+                .withColumn("normalized_text", F.col("parsed_img.text")) \
+                .drop("parsed_img")
+                
+            if "title" in df_images_normalized.columns:
+                df_images_normalized = df_images_normalized.withColumn("title", 
+                    F.when(F.col("title_tika") != "", F.col("title_tika")).otherwise(F.col("title"))
+                ).drop("title_tika")
+            else:
+                df_images_normalized = df_images_normalized.withColumnRenamed("title_tika", "title")
+                
+            logger.info("Image metadata (OCR) loaded successfully.")
+        except Exception as e:
+            logger.info(f"No Image data found or skipped: {e}")
+            
+        # --- JSON (API Dumps) ---
+        df_json_normalized = None
+        if args.execution_date.lower() == "all":
+            base_json_json = f"s3a://raw-json/{domain_pattern}/year=*/month=*/day=*/*_metadata.json"
+        else:
+            base_json_json = f"s3a://raw-json/{domain_pattern}/year={year}/month={month}/day={day}/*_metadata.json"
+            
+        try:
+            df_meta_json = spark.read.option("multiLine", "true").json(base_json_json)
+            df_meta_json = df_meta_json.repartition(20)
+            
+            df_json_normalized = df_meta_json \
+                .withColumn("parsed_json_array", parse_json_udf(F.col("storage_bucket"), F.col("storage_path"))) \
+                .withColumn("parsed_json", F.explode("parsed_json_array")) \
+                .withColumn("title_parsed", F.col("parsed_json.title")) \
+                .withColumn("normalized_text", F.col("parsed_json.text")) \
+                .withColumn("source_url", F.when(F.col("parsed_json.url") != "", F.col("parsed_json.url")).otherwise(F.col("source_url"))) \
+                .drop("parsed_json", "parsed_json_array")
+                
+            if "title" in df_json_normalized.columns:
+                df_json_normalized = df_json_normalized.withColumn("title", 
+                    F.when(F.col("title_parsed") != "", F.col("title_parsed")).otherwise(F.col("title"))
+                ).drop("title_parsed")
+            else:
+                df_json_normalized = df_json_normalized.withColumnRenamed("title_parsed", "title")
+                
+            logger.info("JSON metadata loaded successfully.")
+        except Exception as e:
+            logger.info(f"No JSON data found or skipped: {e}")
+
                 
     except Exception as e:
         logger.error(f"Error reading MinIO: {e}")
         return
 
-    # Union
-    df_raw = None
-    if df_html_normalized is not None and df_docs_normalized is not None:
-        df_raw = df_html_normalized.unionByName(df_docs_normalized, allowMissingColumns=True)
-    elif df_html_normalized is not None:
-        df_raw = df_html_normalized
-    elif df_docs_normalized is not None:
-        df_raw = df_docs_normalized
+    # Union globale des 4 sources
+    dataframes_to_union = []
+    if df_html_normalized is not None:
+        dataframes_to_union.append(df_html_normalized)
+    if df_docs_normalized is not None:
+        dataframes_to_union.append(df_docs_normalized)
+    if df_images_normalized is not None:
+        dataframes_to_union.append(df_images_normalized)
+    if df_json_normalized is not None:
+        dataframes_to_union.append(df_json_normalized)
         
+    df_raw = None
+    if dataframes_to_union:
+        df_raw = dataframes_to_union[0]
+        for df_other in dataframes_to_union[1:]:
+            df_raw = df_raw.unionByName(df_other, allowMissingColumns=True)
+            
     if df_raw is None:
         logger.info("No data to process.")
         return
 
     # 2. Routing & Enrichment
-    df_routed = DynamicRouter.route_dataframe(df_raw, loader.entities)
+    if args.force_target_table:
+        logger.info(f"Bypassing dynamic routing: forcing target_table to '{args.force_target_table}'")
+        df_routed = df_raw.withColumn("target_table", F.lit(args.force_target_table))
+    else:
+        df_routed = DynamicRouter.route_dataframe(df_raw, loader.entities)
     
     df_enriched = df_routed \
         .withColumn("source_system", F.lit(source_system)) \
@@ -175,6 +250,16 @@ def main():
         hudi_writer.upsert(df_entity, table)
         logger.info(f"  -> Hudi table '{table}' written successfully.")
 
+    # --- GATHER METRICS BEFORE CLEANUP ---
+    format_rows = []
+    table_rows = []
+    try:
+        if "content_type" in df_checkpoint.columns:
+            format_rows = df_checkpoint.groupBy("content_type").count().collect()
+        table_rows = df_checkpoint.groupBy("target_table").count().collect()
+    except Exception as e:
+        logger.warning(f"Could not calculate detailed stats: {e}")
+
     # Cleanup checkpoint
     try:
         hadoop_conf = spark._jsc.hadoopConfiguration()
@@ -213,15 +298,27 @@ def main():
 
     format_stats = ""
     table_stats = ""
+    volumetrie_breakdown = f"[VOLUMÉTRIE] Tables Hudi Ciblées  : {len(tables_in_batch)}"
+    
     try:
-        if "content_type" in df_checkpoint.columns:
-            format_rows = df_checkpoint.groupBy("content_type").count().collect()
+        if format_rows:
             format_stats = "\n" + format_table("FORMATS", format_rows) + "\n"
-        
-        table_rows = df_checkpoint.groupBy("target_table").count().collect()
-        table_stats = "\n" + format_table("HUDI TABLES", table_rows) + "\n"
+        if table_rows:
+            table_stats = "\n" + format_table("HUDI TABLES", table_rows) + "\n"
+            # Générer le détail par table pour la section VOLUMÉTRIE
+            volumetrie_breakdown = "\n".join([f"[VOLUMÉTRIE] Table '{str(row[0]):<20}' : {row[1]:>4} documents" for row in table_rows])
     except Exception as e:
-        logger.warning(f"Could not calculate detailed stats: {e}")
+        logger.warning(f"Could not format detailed stats: {e}")
+
+
+    # --- METRICS DASHBOARD ---
+    end_time = time.time()
+    duration_sec = end_time - start_time
+    throughput = total_docs / duration_sec if duration_sec > 0 else 0
+    process = psutil.Process(os.getpid())
+    mem_info = process.memory_info()
+    ram_mb = mem_info.rss / (1024 * 1024)
+    cpu_percent = psutil.cpu_percent()
 
     dashboard = f"""
 ==================================================
@@ -238,7 +335,7 @@ def main():
 [INFO] CPU Process      : {cpu_percent}%
 --------------------------------------------------
 [VOLUMÉTRIE] Documents Lus/Parsés : {total_docs}
-[VOLUMÉTRIE] Tables Hudi Ciblées  : {len(tables_in_batch)}
+{volumetrie_breakdown}
 --------------------------------------------------
 [PERFORMANCES] Débit Traitement   : {throughput:.2f} docs/sec
 ==================================================
