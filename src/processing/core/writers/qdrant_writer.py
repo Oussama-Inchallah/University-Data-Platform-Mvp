@@ -59,6 +59,7 @@ class QdrantWriter:
                .option("qdrant_url", spark_qdrant_url)
                .option("collection_name", collection_name)
                .option("embedding_field", "embedding")
+               .option("id_field", "id")
                .option("schema", df.schema.json())
                # Configuration optionnelle pour la création automatique de la collection
                .option("collection_name", collection_name)
