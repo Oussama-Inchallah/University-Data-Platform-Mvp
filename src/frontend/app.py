@@ -18,6 +18,23 @@ def get_faculties():
     except Exception:
         return ["Toutes", "FSAC", "FSJESAC", "FSTM"] # Fallback statique
 
+def get_metadata_filters(faculty=None, doc_type=None, language=None):
+    try:
+        params = {}
+        if faculty and faculty != "Toutes": params["faculty"] = faculty
+        if doc_type and doc_type != "Toutes": params["doc_type"] = doc_type
+        if language and language != "Toutes": params["language"] = language
+        
+        response = requests.get(f"{API_URL}/metadata_filters", params=params)
+        response.raise_for_status()
+        return response.json()
+    except Exception:
+        return {
+            "faculties": ["FSAC", "FSJESAC", "FSTM"],
+            "doc_types": ["documents_registry", "course_catalog", "website_page", "research_publications"],
+            "languages": ["fr", "en", "ar"]
+        }
+
 st.set_page_config(
     page_title="University Data Platform",
     page_icon="🎓",
@@ -123,78 +140,177 @@ with tab2:
 # ONGLET 3 : RECHERCHE SEMANTIQUE PURE (QDRANT)
 # ---------------------------------------------------------
 with tab3:
-    st.header("Exploration Documentaire Sémantique")
-    st.markdown("Recherche de documents par proximité de sens (idéal pour : Règlements, Syllabi, Notes, Thèses).")
+    st.header("Exploration Documentaire Sémantique (Avancée)")
+    st.markdown("Recherche de documents par proximité de sens combinée avec des filtres stricts de métadonnées.")
     
-    col3, col4 = st.columns([3, 1])
-    with col3:
-        query_qdrant = st.text_input("Idée ou concept recherché :", placeholder="Ex: Procédure de validation des modules", key="qdrant_input")
-    with col4:
-        # Tables types pour le filtre
-        doc_type_filter = st.selectbox("Type de Document :", ["Tous", "documents_registry", "course_catalog", "research_publications", "students_external_profiles"])
+    query_qdrant = st.text_input("Idée ou concept recherché :", placeholder="Ex: Procédure de validation des modules", key="qdrant_input")
     
-    if st.button("Chercher (Sémantique)", key="btn_qdrant"):
+    # Récupérer l'état actuel des filtres (ou 'Toutes' par défaut)
+    current_doc = st.session_state.get("qdrant_doc_type", "Toutes")
+    current_fac = st.session_state.get("qdrant_faculty", "Toutes")
+    current_lang = st.session_state.get("qdrant_language", "Toutes")
+    
+    # Appel dynamique à l'API pour récupérer les listes en cascade
+    filters = get_metadata_filters(faculty=current_fac, doc_type=current_doc, language=current_lang)
+    
+    # Si la valeur sélectionnée n'est plus dans la liste renvoyée (ex: on change de fac, et ce type n'existe pas), on force "Toutes"
+    doc_options = ["Toutes"] + filters["doc_types"]
+    if current_doc not in doc_options: current_doc = "Toutes"
+        
+    fac_options = ["Toutes"] + filters["faculties"]
+    if current_fac not in fac_options: current_fac = "Toutes"
+        
+    lang_options = ["Toutes"] + filters["languages"]
+    if current_lang not in lang_options: current_lang = "Toutes"
+    
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        doc_type_filter = st.selectbox("Type :", doc_options, index=doc_options.index(current_doc), key="qdrant_doc_type")
+    with col_b:
+        faculty_filter_q = st.selectbox("Faculté :", fac_options, index=fac_options.index(current_fac), key="qdrant_faculty")
+    with col_c:
+        language_filter = st.selectbox("Langue :", lang_options, index=lang_options.index(current_lang), key="qdrant_language")
+    
+    if st.button("Chercher (Hybride Avancé)", key="btn_qdrant"):
         if query_qdrant:
-            with st.spinner("Recherche vectorielle dans Qdrant..."):
+            with st.spinner("Recherche vectorielle et filtrage dans Qdrant..."):
                 try:
-                    params = {"q": query_qdrant}
-                    if doc_type_filter != "Tous":
-                        params["doc_type"] = doc_type_filter
+                    payload = {"query": query_qdrant}
+                    
+                    if doc_type_filter != "Toutes":
+                        payload["type"] = doc_type_filter
+                    if faculty_filter_q != "Toutes":
+                        payload["faculty"] = faculty_filter_q
+                    if language_filter != "Toutes":
+                        payload["language"] = language_filter
                         
-                    response = requests.get(f"{API_URL}/search/qdrant_pure", params=params)
+                    response = requests.post(f"{API_URL}/search/qdrant_advanced", json=payload)
                     response.raise_for_status()
                     data = response.json()
                     
                     results = data.get("results", [])
+                    filters_applied = data.get("filters_applied", 0)
                     
                     if results:
-                        st.success(f"Voici les {len(results)} segments sémantiquement les plus proches :")
+                        st.success(f"Voici les {len(results)} segments sémantiquement les plus proches (avec {filters_applied} filtres appliqués) :")
                         for i, res in enumerate(results):
-                            with st.expander(f"🧩 Correspondance {i+1} (Score vectoriel: {res.get('score', 0):.2f}) - Table: {res.get('source_table', 'Inconnu')}"):
+                            title_parts = [
+                                f"🧩 Correspondance {i+1} (Score vectoriel: {res.get('score', 0):.2f})",
+                                f"Type: {res.get('type', 'Inconnu')}",
+                                f"Site: {res.get('faculty', 'Inconnu')}"
+                            ]
+                            if res.get('language'):
+                                title_parts.append(f"Langue: {res.get('language')}")
+                                
+                            expander_title = " - ".join(title_parts)
+                            
+                            with st.expander(expander_title):
                                 st.markdown(f"**Texte :**\n\n> {res.get('text', '')}")
-                                st.caption(f"Système Source : {res.get('faculty', 'Inconnu')}")
+                                
+                                meta_info = f"Faculté : **{res.get('faculty', 'Inconnu')}**"
+                                if res.get('language'):
+                                    meta_info += f" | Langue: **{res.get('language')}**"
+                                    
+                                st.caption(meta_info)
+                                
                                 if res.get('url'):
-                                    st.markdown(f"[Voir le document complet]({res.get('url')})")
+                                    st.markdown(f"[Voir la source]({res.get('url')})")
                     else:
-                        st.warning("Aucun document sémantiquement proche n'a été trouvé.")
+                        st.warning("Aucun document sémantiquement proche n'a été trouvé avec ces filtres.")
                 except Exception as e:
                     st.error(f"Erreur de connexion à Qdrant via l'API : {e}")
 
 # ---------------------------------------------------------
 # ONGLET 4 : OBSERVABILITE (DATAOPS)
 # ---------------------------------------------------------
+def fetch_logs(must_conditions=None):
+    query = {"match_all": {}} if not must_conditions else {"bool": {"must": must_conditions}}
+    es_query = {
+        "query": query,
+        "sort": [{"timestamp": {"order": "desc"}}],
+        "size": 50
+    }
+    try:
+        res = requests.post(f"{ES_URL}/platform_logs/_search", json=es_query)
+        if res.status_code == 404:
+            return None
+        res.raise_for_status()
+        return res.json()["hits"]["hits"]
+    except Exception as e:
+        st.error(f"Erreur: {e}")
+        return []
+
+def display_logs(hits):
+    if not hits:
+        st.info("Aucun log trouvé.")
+        return
+        
+    for hit in hits:
+        src = hit["_source"]
+        status = src.get("status", "UNKNOWN")
+        color = "green" if status == "SUCCESS" else "red" if status == "FAILED" else "orange"
+        
+        st.markdown(f"**[{src.get('timestamp', '')}]** <span style='color:{color}'>**{status}**</span> : Job **{src.get('job_name', '')}**", unsafe_allow_html=True)
+        if status == "FAILED" and src.get('error_message'):
+            st.code(src.get('error_message'))
+
 with tab4:
     st.header("Surveillance des Pipelines de Données")
-    st.markdown("Consultez ici les logs de scraper, l'exécution ETL, les erreurs d'ingestion et les métriques des jobs.")
     
-    if st.button("Rafraîchir les Logs Systèmes"):
-        with st.spinner("Connexion à Elasticsearch..."):
-            try:
-                # Requête directe vers ES (platform_logs)
-                es_query = {
-                    "query": {"match_all": {}},
-                    "sort": [{"timestamp": {"order": "desc"}}],
-                    "size": 10
-                }
-                res = requests.post(f"{ES_URL}/platform_logs/_search", json=es_query)
+    sub1, sub2, sub3, sub4 = st.tabs([
+        "🕷️ Logs Scraper", 
+        "⚙️ Logs d'exécution ETL", 
+        "⚠️ Erreurs d'ingestion", 
+        "📊 Tableaux de bord"
+    ])
+    
+    with sub1:
+        st.subheader("Logs des robots d'extraction (Crawlers)")
+        if st.button("Rafraîchir Logs Scraper", key="btn_scraper"):
+            with st.spinner("Récupération..."):
+                hits = fetch_logs([{"wildcard": {"job_name": "*scraper*"}}])
+                if hits is None: st.info("Index introuvable.")
+                else: display_logs(hits)
                 
-                if res.status_code == 404:
-                    st.info("L'index `platform_logs` n'existe pas encore. Aucun log n'a été enregistré pour le moment.")
-                else:
-                    res.raise_for_status()
-                    hits = res.json()["hits"]["hits"]
+    with sub2:
+        st.subheader("Logs de traitement et d'indexation (Spark/ETL)")
+        if st.button("Rafraîchir Logs ETL", key="btn_etl"):
+            with st.spinner("Récupération..."):
+                # On filtre tout ce qui n'est pas scraper
+                hits = fetch_logs([
+                    {"bool": {"must_not": [{"wildcard": {"job_name": "*scraper*"}}]}}
+                ])
+                if hits is None: st.info("Index introuvable.")
+                else: display_logs(hits)
+                
+    with sub3:
+        st.subheader("Erreurs et alertes d'ingestion")
+        if st.button("Rafraîchir Erreurs", key="btn_err"):
+            with st.spinner("Récupération..."):
+                hits = fetch_logs([{"term": {"status": "FAILED"}}])
+                if hits is None: st.info("Index introuvable.")
+                else: display_logs(hits)
+                
+    with sub4:
+        st.subheader("Tableaux de bord de surveillance")
+        st.markdown("La surveillance complète de la plateforme (Business Intelligence & DataOps) est disponible sur Metabase.")
+        st.info("💡 **Accéder à Metabase :** [http://localhost:3000](http://localhost:3000)")
+        
+        if st.button("Calculer les statistiques rapides", key="btn_stats"):
+            try:
+                res = requests.post(f"{ES_URL}/platform_logs/_search", json={
+                    "size": 0,
+                    "aggs": {"statuses": {"terms": {"field": "status"}}}
+                })
+                if res.status_code == 200:
+                    aggs = res.json().get("aggregations", {}).get("statuses", {}).get("buckets", [])
+                    total = sum(b["doc_count"] for b in aggs)
+                    success = next((b["doc_count"] for b in aggs if b["key"] == "SUCCESS"), 0)
+                    failed = next((b["doc_count"] for b in aggs if b["key"] == "FAILED"), 0)
                     
-                    if not hits:
-                        st.info("Aucun log trouvé dans l'index.")
-                    else:
-                        st.success("Logs récupérés avec succès.")
-                        for hit in hits:
-                            src = hit["_source"]
-                            status = src.get("status", "UNKNOWN")
-                            color = "green" if status == "SUCCESS" else "red" if status == "FAILED" else "orange"
-                            
-                            st.markdown(f"**[{src.get('timestamp', '')}]** <span style='color:{color}'>**{status}**</span> : Job **{src.get('job_name', '')}**", unsafe_allow_html=True)
-                            if status == "FAILED" and src.get('error_message'):
-                                st.code(src.get('error_message'))
+                    c1, c2, c3 = st.columns(3)
+                    c1.metric("Total des exécutions", total)
+                    c2.metric("Réussites (SUCCESS)", success)
+                    c3.metric("Échecs (FAILED)", failed)
             except Exception as e:
-                st.error(f"Impossible de joindre le système de monitoring : {e}")
+                st.error("Erreur de récupération des métriques.")
