@@ -13,6 +13,8 @@ socket.getaddrinfo = new_getaddrinfo
 # ==============================================================================
 
 from fastapi import FastAPI, Query, HTTPException
+from pydantic import BaseModel
+from typing import Optional, List
 from elasticsearch import Elasticsearch
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
@@ -52,6 +54,7 @@ def read_root():
 def get_faculties():
     """
     Récupère la liste dynamique de toutes les facultés existantes dans la base.
+    (Gardé pour rétrocompatibilité)
     """
     try:
         body = {
@@ -72,6 +75,51 @@ def get_faculties():
     except Exception as e:
         logger.error(f"Erreur lors de la récupération des facultés : {e}")
         return {"faculties": []}
+
+@app.get("/metadata_filters")
+def get_metadata_filters(
+    faculty: str = Query(None),
+    doc_type: str = Query(None),
+    language: str = Query(None)
+):
+    """
+    Récupère les listes dynamiques pour tous les filtres : facultés, types de doc, langues.
+    Filtre dynamiquement en fonction des sélections précédentes (filtres en cascade).
+    """
+    try:
+        must_conditions = []
+        
+        if faculty and faculty != "Toutes":
+            must_conditions.append({"term": {"source_system.keyword": faculty}})
+        if doc_type and doc_type != "Toutes":
+            must_conditions.append({"term": {"entity_type.keyword": doc_type}})
+        if language and language != "Toutes":
+            must_conditions.append({"term": {"language.keyword": language}})
+            
+        body = {
+            "size": 0,
+            "aggs": {
+                "faculties": {"terms": {"field": "source_system.keyword", "size": 100}},
+                "doc_types": {"terms": {"field": "entity_type.keyword", "size": 100}},
+                "languages": {"terms": {"field": "language.keyword", "size": 50}}
+            }
+        }
+        
+        if must_conditions:
+            body["query"] = {"bool": {"must": must_conditions}}
+
+        # On ignore les erreurs si certains champs n'existent pas encore dans l'index
+        response = es_client.search(index="university_content", body=body, ignore_unavailable=True)
+        aggs = response.get("aggregations", {})
+        
+        return {
+            "faculties": [b["key"] for b in aggs.get("faculties", {}).get("buckets", [])],
+            "doc_types": [b["key"] for b in aggs.get("doc_types", {}).get("buckets", []) if b["key"] != "unclassified_content"],
+            "languages": [b["key"] for b in aggs.get("languages", {}).get("buckets", [])]
+        }
+    except Exception as e:
+        logger.error(f"Erreur lors de la récupération des filtres métadonnées : {e}")
+        return {"faculties": [], "doc_types": [], "languages": []}
 
 @app.get("/search/keyword")
 def search_keyword(
@@ -391,4 +439,88 @@ def search_qdrant_pure(
         
     except Exception as e:
         logger.error(f"Erreur Qdrant Pure : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+class AdvancedSearchPayload(BaseModel):
+    query: str
+    doc_id: Optional[str] = None
+    type: Optional[str] = None
+    faculty: Optional[str] = None
+    language: Optional[str] = None
+    source: Optional[str] = None
+
+@app.post("/search/qdrant_advanced")
+def search_qdrant_advanced(payload: AdvancedSearchPayload):
+    """
+    Recherche Sémantique (Vectorielle) avec filtres de métadonnées (Hybride).
+    Construit dynamiquement les conditions exactes de Qdrant.
+    """
+    try:
+        formatted_query = f"query: {payload.query}"
+        query_vector = model.encode(formatted_query).tolist()
+        
+        # Construction dynamique du filtre Qdrant
+        must_conditions = []
+        
+        # Correspondance avec le payload
+        if payload.doc_id:
+            must_conditions.append(models.FieldCondition(key="doc_id", match=models.MatchValue(value=payload.doc_id)))
+        
+        if payload.type:
+            # Map type -> target_table ou autre champ selon NLP processor
+            must_conditions.append(models.FieldCondition(key="target_table", match=models.MatchValue(value=payload.type)))
+            
+        if payload.faculty:
+            # Map faculty -> source_system
+            must_conditions.append(models.FieldCondition(key="source_system", match=models.MatchValue(value=payload.faculty)))
+            
+        if payload.language:
+            must_conditions.append(models.FieldCondition(key="language", match=models.MatchValue(value=payload.language)))
+            
+        if payload.source:
+            must_conditions.append(models.FieldCondition(key="source", match=models.MatchValue(value=payload.source)))
+
+        query_filter = None
+        if must_conditions:
+            query_filter = models.Filter(must=must_conditions)
+            
+        search_result = qdrant_client.search(
+            collection_name="university_chunks",
+            query_vector=query_vector,
+            query_filter=query_filter,
+            limit=20
+        )
+        
+        results = []
+        seen_texts = set()
+        
+        for hit in search_result:
+            if hit.score < 0.75: # Seuil un peu plus permissif car on a des filtres stricts
+                continue
+                
+            chunk_payload = hit.payload or {}
+            text = chunk_payload.get("chunk_text", "").strip()
+            
+            if text in seen_texts:
+                continue
+            seen_texts.add(text)
+            
+            results.append({
+                "score": hit.score,
+                "text": text,
+                "doc_id": chunk_payload.get("doc_id", ""),
+                "type": chunk_payload.get("target_table", ""),
+                "faculty": chunk_payload.get("source_system", ""),
+                "language": chunk_payload.get("language", ""),
+                "source": chunk_payload.get("source", ""),
+                "url": chunk_payload.get("source_url", "")
+            })
+            
+            if len(results) >= 10:
+                break
+                
+        return {"query": payload.query, "filters_applied": len(must_conditions), "results": results}
+        
+    except Exception as e:
+        logger.error(f"Erreur Qdrant Advanced : {e}")
         raise HTTPException(status_code=500, detail=str(e))
