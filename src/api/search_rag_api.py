@@ -1,3 +1,17 @@
+import socket
+
+# ==============================================================================
+# WORKAROUND DOCKER IPv6 "Network is unreachable" [Errno 101]
+# Empêche l'API Gemini (google.generativeai) de bloquer indéfiniment 
+# si Docker tente de résoudre googleapis.com en IPv6.
+# ==============================================================================
+old_getaddrinfo = socket.getaddrinfo
+def new_getaddrinfo(*args, **kwargs):
+    responses = old_getaddrinfo(*args, **kwargs)
+    return [response for response in responses if response[0] == socket.AF_INET]
+socket.getaddrinfo = new_getaddrinfo
+# ==============================================================================
+
 from fastapi import FastAPI, Query, HTTPException
 from elasticsearch import Elasticsearch
 from qdrant_client import QdrantClient
@@ -160,7 +174,8 @@ import google.generativeai as genai
 # Configuration de Gemini
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
 if GEMINI_API_KEY:
-    genai.configure(api_key=GEMINI_API_KEY)
+    # Force REST transport to avoid gRPC IPv6 hanging issues in Docker
+    genai.configure(api_key=GEMINI_API_KEY, transport="rest")
     gemini_model = genai.GenerativeModel('gemini-3.1-flash-lite')
 else:
     gemini_model = None
@@ -312,4 +327,68 @@ Réponse :"""
         
     except Exception as e:
         logger.error(f"Erreur Qdrant/Embedding : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+from qdrant_client.http import models
+
+@app.get("/search/qdrant_pure")
+def search_qdrant_pure(
+    q: str = Query(..., description="La question en langage naturel"),
+    doc_type: str = Query(None, description="Filtrer par type de document (ex: documents_registry)")
+):
+    """
+    Recherche Sémantique (Vectorielle) pure via Qdrant, sans génération IA ni hybridation ES.
+    Idéal pour retrouver des documents similaires (règlements, syllabi, etc.).
+    """
+    try:
+        formatted_query = f"query: {q}"
+        query_vector = model.encode(formatted_query).tolist()
+        
+        query_filter = None
+        if doc_type and doc_type != "Tous":
+            query_filter = models.Filter(
+                must=[
+                    models.FieldCondition(
+                        key="target_table",
+                        match=models.MatchValue(value=doc_type)
+                    )
+                ]
+            )
+        
+        search_result = qdrant_client.search(
+            collection_name="university_chunks",
+            query_vector=query_vector,
+            query_filter=query_filter,
+            limit=20
+        )
+        
+        results = []
+        seen_texts = set()
+        
+        for hit in search_result:
+            if hit.score < 0.80:
+                continue
+                
+            payload = hit.payload or {}
+            text = payload.get("chunk_text", "").strip()
+            
+            if text in seen_texts:
+                continue
+            seen_texts.add(text)
+            
+            results.append({
+                "score": hit.score,
+                "text": text,
+                "url": payload.get("source_url", ""),
+                "faculty": payload.get("source_system", "Unknown"),
+                "source_table": payload.get("target_table", "Unknown")
+            })
+            
+            if len(results) >= 10:
+                break
+                
+        return {"query": q, "results": results}
+        
+    except Exception as e:
+        logger.error(f"Erreur Qdrant Pure : {e}")
         raise HTTPException(status_code=500, detail=str(e))
