@@ -109,15 +109,8 @@ def process_nlp_pipeline(df):
     df_with_chunks = df.withColumn("chunks", chunk_text_udf(col("normalized_text")))
     
     # 2. On explose l'array pour que chaque chunk devienne une ligne distincte
-    # On garde les métadonnées utiles pour RAG (url, id, etc.)
-    df_exploded = df_with_chunks.select(
-        col("record_id"),
-        col("source_system"),
-        col("source_url"),
-        col("crawl_timestamp"),
-        col("target_table"),
-        explode(col("chunks")).alias("chunk_text")
-    )
+    # On garde TOUTES les métadonnées utiles pour RAG (url, id, language, year, etc.)
+    df_exploded = df_with_chunks.withColumn("chunk_text", explode(col("chunks"))).drop("chunks")
     
     # Génération d'un sous-ID déterministe (UUID valide) pour chaque chunk (MD5 formaté en 8-4-4-4-12)
     from pyspark.sql.functions import md5, concat_ws, expr
