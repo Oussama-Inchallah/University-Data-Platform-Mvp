@@ -18,12 +18,14 @@ try:
     from processing.core.writers.es_writer import ElasticsearchWriter
     from processing.core.writers.qdrant_writer import QdrantWriter
     from processing.core.transformers.nlp_processor import process_nlp_pipeline
+    from processing.core.utils.platform_logger import PlatformLogger
 except ImportError:
     sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../../')))
     from processing.core.config_loader import ConfigLoader
     from processing.core.writers.es_writer import ElasticsearchWriter
     from processing.core.writers.qdrant_writer import QdrantWriter
     from processing.core.transformers.nlp_processor import process_nlp_pipeline
+    from processing.core.utils.platform_logger import PlatformLogger
 
 import pyspark.sql.functions as F
 
@@ -51,6 +53,9 @@ def main():
 
     loader = ConfigLoader(args.config)
     source_system = args.source_system
+    
+    platform_logger = PlatformLogger()
+    job_name = f"spark_process_hudi_to_search_{source_system}"
     
     spark = get_spark_session(f"UniversityData_Gold_{source_system}")
     
@@ -162,6 +167,26 @@ def main():
 ==================================================
 """
     logger.info(dashboard)
+    platform_logger.log_job_status(job_name, "SUCCESS")
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        logger.error(f"GOLD JOB FAILED: {e}")
+        import sys
+        if 'platform_logger' in locals() and 'job_name' in locals():
+            platform_logger.log_job_status(job_name, "FAILED", str(e))
+        else:
+            try:
+                from processing.core.utils.platform_logger import PlatformLogger
+                pl = PlatformLogger()
+                import argparse
+                parser = argparse.ArgumentParser()
+                parser.add_argument("--source_system", required=False, default="unknown")
+                args, _ = parser.parse_known_args()
+                pl.log_job_status(f"spark_process_hudi_to_search_{args.source_system}", "FAILED", str(e))
+            except:
+                pass
+        sys.exit(1)
+

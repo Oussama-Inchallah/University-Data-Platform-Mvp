@@ -28,18 +28,19 @@ st.title("🎓 Plateforme Universitaire Intelligente")
 st.markdown("Bienvenue sur l'interface unifiée d'exploration des données de l'université.")
 
 # Création des 3 onglets
-tab1, tab2, tab3 = st.tabs([
-    "🤖 Assistant IA (RAG)", 
-    "🔍 Moteur de Recherche", 
-    "📈 Platform Monitoring (DataOps)"
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🤖 Assistant IA (RAG Hybride)", 
+    "🔍 Moteur de Recherche (ES)", 
+    "🧠 Recherche Sémantique (Qdrant)",
+    "📈 Observabilité de la Plateforme"
 ])
 
 # ---------------------------------------------------------
 # ONGLET 1 : ASSISTANT IA (QDRANT / SEMANTIQUE)
 # ---------------------------------------------------------
 with tab1:
-    st.header("Posez une question à l'Assistant IA")
-    st.markdown("Cet assistant comprend le **sens** de votre question et cherche dans les règlements, thèses et syllabus.")
+    st.header("Posez une question à l'Assistant IA (Hybride ES + Qdrant)")
+    st.markdown("Cet assistant hybride combine la précision des mots-clés d'Elasticsearch avec la compréhension sémantique de Qdrant.")
     
     query_rag = st.text_input("Votre question :", placeholder="Ex: Quelles sont les conditions d'admission en Master ?", key="rag_input")
     
@@ -119,11 +120,52 @@ with tab2:
                     st.error(f"Erreur de connexion au Moteur de Recherche : {e}")
 
 # ---------------------------------------------------------
-# ONGLET 3 : PLATFORM MONITORING (DATAOPS)
+# ONGLET 3 : RECHERCHE SEMANTIQUE PURE (QDRANT)
 # ---------------------------------------------------------
 with tab3:
+    st.header("Exploration Documentaire Sémantique")
+    st.markdown("Recherche de documents par proximité de sens (idéal pour : Règlements, Syllabi, Notes, Thèses).")
+    
+    col3, col4 = st.columns([3, 1])
+    with col3:
+        query_qdrant = st.text_input("Idée ou concept recherché :", placeholder="Ex: Procédure de validation des modules", key="qdrant_input")
+    with col4:
+        # Tables types pour le filtre
+        doc_type_filter = st.selectbox("Type de Document :", ["Tous", "documents_registry", "course_catalog", "research_publications", "students_external_profiles"])
+    
+    if st.button("Chercher (Sémantique)", key="btn_qdrant"):
+        if query_qdrant:
+            with st.spinner("Recherche vectorielle dans Qdrant..."):
+                try:
+                    params = {"q": query_qdrant}
+                    if doc_type_filter != "Tous":
+                        params["doc_type"] = doc_type_filter
+                        
+                    response = requests.get(f"{API_URL}/search/qdrant_pure", params=params)
+                    response.raise_for_status()
+                    data = response.json()
+                    
+                    results = data.get("results", [])
+                    
+                    if results:
+                        st.success(f"Voici les {len(results)} segments sémantiquement les plus proches :")
+                        for i, res in enumerate(results):
+                            with st.expander(f"🧩 Correspondance {i+1} (Score vectoriel: {res.get('score', 0):.2f}) - Table: {res.get('source_table', 'Inconnu')}"):
+                                st.markdown(f"**Texte :**\n\n> {res.get('text', '')}")
+                                st.caption(f"Système Source : {res.get('faculty', 'Inconnu')}")
+                                if res.get('url'):
+                                    st.markdown(f"[Voir le document complet]({res.get('url')})")
+                    else:
+                        st.warning("Aucun document sémantiquement proche n'a été trouvé.")
+                except Exception as e:
+                    st.error(f"Erreur de connexion à Qdrant via l'API : {e}")
+
+# ---------------------------------------------------------
+# ONGLET 4 : OBSERVABILITE (DATAOPS)
+# ---------------------------------------------------------
+with tab4:
     st.header("Surveillance des Pipelines de Données")
-    st.markdown("Analyse des logs d'exécution Airflow et Spark stockés dans Elasticsearch.")
+    st.markdown("Consultez ici les logs de scraper, l'exécution ETL, les erreurs d'ingestion et les métriques des jobs.")
     
     if st.button("Rafraîchir les Logs Systèmes"):
         with st.spinner("Connexion à Elasticsearch..."):

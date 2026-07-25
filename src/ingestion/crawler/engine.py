@@ -19,6 +19,12 @@ from bs4 import BeautifulSoup
 from collections import deque
 from urllib.parse import urljoin, urlparse
 from src.ingestion.crawler.storage import StorageRouter
+import sys
+try:
+    from src.processing.core.utils.platform_logger import PlatformLogger
+except ImportError:
+    # Fallback si le module est appelé de l'extérieur
+    pass
 
 # ==============================================================================
 # WORKAROUND DOCKER IPv6 "Network is unreachable" [Errno 101]
@@ -620,3 +626,15 @@ class GenericCrawler:
             force_bucket="raw-logs"
         )
         self.logger.info("Stats uploaded to raw-logs.")
+        
+        # --- Platform Observability Logging ---
+        job_name = f"scraper_{self.university_id.lower()}"
+        status = "SUCCESS" if stats["errors"] == 0 else "FAILED"
+        error_msg = f"{stats['errors']} errors encountered" if stats["errors"] > 0 else None
+        
+        try:
+            pl = PlatformLogger()
+            pl.log_job_status(job_name, status, error_msg)
+        except Exception as e:
+            self.logger.warning(f"Could not push to PlatformLogger: {e}")
+
