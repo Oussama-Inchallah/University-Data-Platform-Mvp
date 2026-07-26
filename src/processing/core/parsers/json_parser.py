@@ -21,20 +21,17 @@ def extract_json_from_minio(bucket: str, path: str) -> List[Dict[str, str]]:
         return []
         
     try:
-        from minio import Minio
-        
-        endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000").replace("http://", "").replace("https://", "")
-        access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-        secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-        
-        client = Minio(
-            endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=False
-        )
-        
-        response = client.get_object(bucket, path)
+        # Initialisation lazy du client MinIO
+        global minio_client
+        if 'minio_client' not in globals():
+            from minio import Minio
+            endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000").replace("http://", "").replace("https://", "")
+            access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+            secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+            minio_client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=False)
+            
+        # Streamer le fichier JSON depuis MinIO
+        response = minio_client.get_object(bucket, path)
         content = response.read().decode('utf-8', errors='ignore')
         response.close()
         response.release_conn()

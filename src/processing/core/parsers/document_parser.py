@@ -31,22 +31,17 @@ def extract_document_from_minio(bucket: str, path: str) -> Dict[str, str]:
         return {"text": "", "title": ""}
         
     try:
-        from minio import Minio
-        
-        # Configuration MinIO
-        endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000").replace("http://", "").replace("https://", "")
-        access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-        secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-        
-        client = Minio(
-            endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=False
-        )
-        
+        # Initialisation lazy (une fois par worker PySpark)
+        global minio_client
+        if 'minio_client' not in globals():
+            from minio import Minio
+            endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000").replace("http://", "").replace("https://", "")
+            access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+            secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+            minio_client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=False)
+            
         # Streamer le fichier depuis MinIO
-        response = client.get_object(bucket, path)
+        response = minio_client.get_object(bucket, path)
         binary_data = response.read()
         response.close()
         response.release_conn()
@@ -69,20 +64,11 @@ def extract_document_from_minio(bucket: str, path: str) -> Dict[str, str]:
         
         metadata = parsed.get("metadata", {})
         
-        # 2. Passe Lente (Conditionnelle) : Si moins de 100 caractères, c'est probablement un scan ou une image
+        # 2. Passe Lente (Conditionnelle) : DÉSACTIVÉE POUR LA VITESSE (x5)
+        # L'OCR prenait jusqu'à 5 minutes par document. 
         if len(text) < 100:
-            logger.info(f"Smart OCR: Peu de texte détecté ({len(text)} chars). Lancement de l'OCR pour {bucket}/{path}")
-            headers_ocr = {"X-Tika-PDFOcrStrategy": "ocr_only"}
-            requestOptions_ocr = {'timeout': 300} # Timeout 5 minutes pour l'OCR lourd
-            parsed_ocr = parser.from_buffer(binary_data, headers=headers_ocr, requestOptions=requestOptions_ocr)
-            
-            content_ocr = parsed_ocr.get("content", "")
-            if content_ocr is None: content_ocr = ""
-            text = " ".join(content_ocr.split())
-            
-            # Mise à jour des métadonnées avec la passe OCR si disponible
-            if parsed_ocr.get("metadata"):
-                metadata = parsed_ocr.get("metadata")
+            logger.info(f"Peu de texte détecté ({len(text)} chars) mais OCR désactivé pour performance sur {bucket}/{path}")
+            # OCR est ignoré pour gagner du temps
                 
         # Libération immédiate de la mémoire binaire
         del binary_data
