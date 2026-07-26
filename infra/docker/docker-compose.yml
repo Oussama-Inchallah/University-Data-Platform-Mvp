@@ -22,7 +22,7 @@ x-airflow-common: &airflow-common
     AIRFLOW_CONN_SPARK_DEFAULT: '{"conn_type": "spark", "host": "local[1]"}'
     AIRFLOW_CONN_SPARK_GOLD: '{"conn_type": "spark", "host": "local[1]"}'
     SPARK_HOME: /opt/spark
-    JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+    JAVA_HOME: /usr/lib/jvm/java-17-openjdk-arm64
     ELASTICSEARCH_URL: "http://elasticsearch:9200"
     QDRANT_URL: "http://qdrant:6333"
     GEMINI_API_KEY: ${GEMINI_API_KEY:-""}
