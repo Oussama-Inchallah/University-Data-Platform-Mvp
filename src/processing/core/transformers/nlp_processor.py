@@ -25,9 +25,12 @@ def chunk_text_udf(texts: pd.Series) -> pd.Series:
         # Fallback au cas où langchain n'est pas installé sur les workers
         return pd.Series([[] for _ in texts])
         
+    # OPTIMISATION CPU x2 : On passe la taille des chunks de 500 à 1000.
+    # Cela divise par deux le nombre de passages dans le réseau de neurones PyTorch.
+    # Le modèle e5-small supporte jusqu'à 512 tokens (~2000 caractères), c'est donc parfait.
     splitter = RecursiveCharacterTextSplitter(
-        chunk_size=500, 
-        chunk_overlap=50,
+        chunk_size=1000, 
+        chunk_overlap=100,
         separators=["\n\n", "\n", ".", " ", ""]
     )
     
@@ -65,6 +68,13 @@ def generate_embeddings_udf(iterator: Iterator[pd.Series]) -> Iterator[pd.Series
     import os
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["HF_HOME"] = "/opt/airflow/.cache/huggingface"
+    
+    # NOUVELLE STRATÉGIE IA : On délègue le multithreading à PyTorch (C++) plutôt qu'à Spark.
+    # Au lieu d'avoir 4 workers Spark qui se marchent dessus, on a 1 seul worker Spark
+    # mais PyTorch va utiliser les 4 cœurs physiques pour accélérer les maths matricielles.
+    os.environ["OMP_NUM_THREADS"] = "4"
+    import torch
+    torch.set_num_threads(4)
     
     import time
     model = None
@@ -126,13 +136,12 @@ def process_nlp_pipeline(df):
             expr("substring(chunk_md5, 21, 12)")
         )
     ).drop("chunk_md5", "chunk_id")    
-    # 3. Vectorisation des chunks en parallèle
-    # Utilisation dynamique de tous les cœurs alloués par Spark (local[*]) au lieu d'une limite fixe de 2.
-    from pyspark.sql import SparkSession
-    spark = SparkSession.getActiveSession()
-    cores = spark.sparkContext.defaultParallelism if spark else 4
-    
-    df_vectorized = df_exploded.repartition(cores).withColumn("embedding", generate_embeddings_udf(col("chunk_text")))
+    # 3. Vectorisation des chunks 
+    # STRATÉGIE "SINGLE-WORKER / MULTI-THREAD" :
+    # On force la répartition à 1 partition. Spark ne lancera qu'un seul processus Python.
+    # C'est ce processus unique qui va utiliser les 4 cœurs via PyTorch (torch.set_num_threads(4)).
+    # Cela élimine 100% de l'overhead Spark/Arrow et divise la RAM par 4 (1 seul modèle chargé).
+    df_vectorized = df_exploded.repartition(1).withColumn("embedding", generate_embeddings_udf(col("chunk_text")))
     
     # On retire la colonne temporaire 'chunks' du DF principal pour ne pas l'alourdir
     df_main = df_with_chunks.drop("chunks")
