@@ -30,9 +30,9 @@ class HudiWriter:
             'hoodie.datasource.write.partitionpath.field': 'source_system',
             'hoodie.datasource.write.precombine.field': 'crawl_timestamp',
             'hoodie.datasource.write.operation': 'upsert',
-            # Optimisations pour le MVP local (évite de spawner trop de tasks)
-            'hoodie.upsert.shuffle.parallelism': 2, 
-            'hoodie.insert.shuffle.parallelism': 2,
+            # Optimisations pour accélérer l'écriture (Débridage)
+            'hoodie.upsert.shuffle.parallelism': 8, 
+            'hoodie.insert.shuffle.parallelism': 8,
             # Indexation de base
             'hoodie.index.type': 'BLOOM',
             # Schema Evolution

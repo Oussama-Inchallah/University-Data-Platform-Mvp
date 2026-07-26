@@ -54,6 +54,7 @@ def main():
     parser.add_argument("--source_system", required=True)
     parser.add_argument("--domain_pattern", required=False)
     parser.add_argument("--force_target_table", required=False, help="Bypass routing and force all records to this table")
+    parser.add_argument("--api_name", required=False, help="Nom de l'API (ex: OpenAlexAPI) pour préfixer l'URL dynamiquement")
     args = parser.parse_args()
 
     logger.info(f"Starting SILVER job (ZERO-OOM Architecture): {args.source_system}")
@@ -215,10 +216,22 @@ def main():
     else:
         df_routed = DynamicRouter.route_dataframe(df_raw, loader.entities)
     
-    df_enriched = df_routed \
-        .withColumn("source_system", F.lit(source_system)) \
-        .withColumn("source_url", F.col("source_url")) \
-        .withColumn("crawl_timestamp", F.col("crawl_timestamp").cast("timestamp")) \
+    # Rendre le script 100% universel : 
+    # Si le DAG envoie le paramètre --api_name (ex: OpenAlexAPI, ScopusAPI, etc.),
+    # on préfixe l'URL dynamiquement. S'il n'y a pas de paramètre (ex: Scraping Web), on ne touche à rien.
+    
+    if args.api_name:
+        df_enriched = df_routed \
+            .withColumn("source_system", F.lit(source_system)) \
+            .withColumn("source_url", F.concat(F.lit(f"[{args.api_name}] "), F.col("source_url"))) \
+            .withColumn("crawl_timestamp", F.col("crawl_timestamp").cast("timestamp"))
+    else:
+        df_enriched = df_routed \
+            .withColumn("source_system", F.lit(source_system)) \
+            .withColumn("source_url", F.col("source_url")) \
+            .withColumn("crawl_timestamp", F.col("crawl_timestamp").cast("timestamp"))
+            
+    df_enriched = df_enriched \
         .withColumn("ingestion_timestamp", F.current_timestamp()) \
         .withColumn("is_deleted", F.lit(False)) \
         .withColumn("language", detect_language_udf(F.col("normalized_text"))) \

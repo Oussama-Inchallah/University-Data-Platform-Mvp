@@ -24,20 +24,16 @@ def extract_html_from_minio(bucket: str, path: str) -> Dict[str, str]:
         return {"title": "", "text": ""}
         
     try:
-        from minio import Minio
-        
-        endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000").replace("http://", "").replace("https://", "")
-        access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
-        secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
-        
-        client = Minio(
-            endpoint,
-            access_key=access_key,
-            secret_key=secret_key,
-            secure=False
-        )
-        
-        response = client.get_object(bucket, path)
+        # Initialisation lazy du client (une fois par worker PySpark)
+        global minio_client
+        if 'minio_client' not in globals():
+            from minio import Minio
+            endpoint = os.environ.get("MINIO_ENDPOINT", "minio:9000").replace("http://", "").replace("https://", "")
+            access_key = os.environ.get("MINIO_ACCESS_KEY", "minioadmin")
+            secret_key = os.environ.get("MINIO_SECRET_KEY", "minioadmin")
+            minio_client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=False)
+            
+        response = minio_client.get_object(bucket, path)
         html_content = response.read().decode('utf-8', errors='ignore')
         response.close()
         response.release_conn()
