@@ -72,7 +72,8 @@ with DAG(
             "--domain_pattern", DOMAIN_PATTERN,
         ],
         conf={
-            "spark.master": "local[1]",
+            "spark.master": "local[16]",
+            "spark.sql.shuffle.partitions": "16",
             "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
             "spark.hadoop.fs.s3a.access.key": "minioadmin",
             "spark.hadoop.fs.s3a.secret.key": "minioadmin",
@@ -83,7 +84,7 @@ with DAG(
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
             "hive.metastore.uris": "thrift://hive-metastore:9083",
         },
-        driver_memory="1g",
+        driver_memory="4g",
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
@@ -100,6 +101,8 @@ with DAG(
             "--source_system", UNIVERSITY_ID,
         ],
         conf={
+            "spark.master": "local[16]",
+            "spark.sql.shuffle.partitions": "16",
             "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
             "spark.hadoop.fs.s3a.access.key": "minioadmin",
             "spark.hadoop.fs.s3a.secret.key": "minioadmin",
@@ -110,7 +113,7 @@ with DAG(
             "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
             "hive.metastore.uris": "thrift://hive-metastore:9083",
         },
-        driver_memory="1g",
+        driver_memory="4g",
         verbose=True,
         execution_timeout=timedelta(hours=2),
     )
@@ -122,6 +125,8 @@ with DAG(
         application='/app/processing/jobs/sync_hudi_catalog.py',
         name=f"sync_catalog_{UNIVERSITY_ID}",
         conf={
+            "spark.master": "local[16]",
+            "spark.sql.shuffle.partitions": "16",
             "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
             "spark.hadoop.fs.s3a.access.key": "minioadmin",
             "spark.hadoop.fs.s3a.secret.key": "minioadmin",
