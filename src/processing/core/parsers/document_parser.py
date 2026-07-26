@@ -56,22 +56,36 @@ def extract_document_from_minio(bucket: str, path: str) -> Dict[str, str]:
         os.environ['TIKA_SERVER_ENDPOINT'] = 'http://tika:9998'
         
         from tika import parser
-        headers = {
-            "X-Tika-PDFOcrStrategy": "ocr_and_text"
-        }
-        parsed = parser.from_buffer(binary_data, headers=headers)
         
-        # Libération immédiate de la mémoire binaire
-        del binary_data
+        # --- Smart OCR Algorithm ---
+        # 1. Passe Rapide : Extraction du texte natif (sans OCR)
+        headers = {"X-Tika-PDFOcrStrategy": "no_ocr"}
+        requestOptions = {'timeout': 30} # Timeout rapide
+        parsed = parser.from_buffer(binary_data, headers=headers, requestOptions=requestOptions)
         
         content = parsed.get("content", "")
+        if content is None: content = ""
+        text = " ".join(content.split())
+        
         metadata = parsed.get("metadata", {})
         
-        if content is None:
-            content = ""
+        # 2. Passe Lente (Conditionnelle) : Si moins de 100 caractères, c'est probablement un scan ou une image
+        if len(text) < 100:
+            logger.info(f"Smart OCR: Peu de texte détecté ({len(text)} chars). Lancement de l'OCR pour {bucket}/{path}")
+            headers_ocr = {"X-Tika-PDFOcrStrategy": "ocr_only"}
+            requestOptions_ocr = {'timeout': 300} # Timeout 5 minutes pour l'OCR lourd
+            parsed_ocr = parser.from_buffer(binary_data, headers=headers_ocr, requestOptions=requestOptions_ocr)
             
-        # Nettoyage très basique du texte, et limitation pour éviter les pics de RAM sur des PDF géants
-        text = " ".join(content.split())
+            content_ocr = parsed_ocr.get("content", "")
+            if content_ocr is None: content_ocr = ""
+            text = " ".join(content_ocr.split())
+            
+            # Mise à jour des métadonnées avec la passe OCR si disponible
+            if parsed_ocr.get("metadata"):
+                metadata = parsed_ocr.get("metadata")
+                
+        # Libération immédiate de la mémoire binaire
+        del binary_data
         
         # Limite à ~200,000 caractères (approx 50-100 pages de texte brut) pour éviter les OOM lors de l'enregistrement Hudi
         if len(text) > 200000:

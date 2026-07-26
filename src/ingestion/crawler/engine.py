@@ -12,13 +12,23 @@ import time
 import json
 import hashlib
 import socket
+import threading
+import queue
+import concurrent.futures
 from typing import List, Set, Dict, Optional, Tuple
 import requests
+from requests.adapters import HTTPAdapter, Retry
 import urllib3
 from bs4 import BeautifulSoup
 from collections import deque
 from urllib.parse import urljoin, urlparse
 from src.ingestion.crawler.storage import StorageRouter
+import sys
+try:
+    from src.processing.core.utils.platform_logger import PlatformLogger
+except ImportError:
+    # Fallback si le module est appelé de l'extérieur
+    pass
 
 # ==============================================================================
 # WORKAROUND DOCKER IPv6 "Network is unreachable" [Errno 101]
@@ -59,6 +69,10 @@ EXCLUDED_URL_PATTERNS = [
     '/favicon',
     '/robots.txt',
     '/sitemap.xml',
+    'login.php',           # Pages de connexion
+    'register.php',        # Pages d'inscription
+    'auth',                # Endpoints d'authentification
+    'reset-password',      # Réinitialisation de mot de passe
 ]
 
 def is_junk_url(url: str) -> bool:
@@ -105,12 +119,98 @@ def is_valid_size(content_bytes: bytes, content_type: str) -> bool:
     else:
         return size > 100   # > 100 bytes pour HTML/JSON
 
+class PlaywrightWorker(threading.Thread):
+    def __init__(self, logger, user_agent):
+        super().__init__(daemon=True)
+        self.logger = logger
+        self.user_agent = user_agent
+        self.task_queue = queue.Queue()
+        self.playwright = None
+        self.browser = None
+        self.context = None
+        self._stop_event = threading.Event()
+
+    def run(self):
+        try:
+            with sync_playwright() as p:
+                self.playwright = p
+                self.browser = p.chromium.launch(headless=True)
+                self.context = self.browser.new_context(ignore_https_errors=True, user_agent=self.user_agent)
+                
+                while not self._stop_event.is_set():
+                    try:
+                        task = self.task_queue.get(timeout=1.0)
+                        if task is None:
+                            break
+                    except queue.Empty:
+                        continue
+                        
+                    url, on_resource, result_queue = task
+                    try:
+                        page = self.context.new_page()
+                        
+                        def handle_response(response):
+                            if not on_resource: return
+                            try:
+                                if response.status < 200 or response.status >= 400: return
+                                if 300 <= response.status < 400: return
+                                if is_junk_url(response.url): return
+                                ct = response.headers.get('content-type', '').lower()
+                                if is_useful_content_type(ct):
+                                    body = response.body()
+                                    if is_valid_size(body, ct):
+                                        on_resource(response.url, body, ct)
+                            except Exception:
+                                pass
+                                
+                        page.on('response', handle_response)
+                        
+                        try:
+                            response = page.goto(url, wait_until='load', timeout=15000)
+                            page.wait_for_load_state('networkidle', timeout=8000)
+                        except Exception as e:
+                            self.logger.info(f"SPA background connections still active for {url}. Proceeding.")
+                            
+                        content = page.content().encode('utf-8')
+                        final_url = page.url
+                        result_queue.put((content, "text/html", final_url, None))
+                    except Exception as e:
+                        result_queue.put((None, None, None, e))
+                    finally:
+                        try:
+                            page.close()
+                        except:
+                            pass
+                        self.task_queue.task_done()
+        except Exception as e:
+            self.logger.error(f"PlaywrightWorker fatal error: {e}")
+
+    def stop(self):
+        self._stop_event.set()
+        self.task_queue.put(None)
+
 class DynamicFetcher:
     def __init__(self, user_agent: str = "Mozilla/5.0", request_timeout: int = 30, retry_count: int = 3):
         self.logger = logging.getLogger(__name__)
         self.user_agent = user_agent
         self.request_timeout = request_timeout
         self.retry_count = retry_count
+        
+        # Initialisation de la session réutilisable avec un pool de 10 connexions
+        self.session = requests.Session()
+        adapter = HTTPAdapter(pool_connections=10, pool_maxsize=10, max_retries=0)
+        self.session.mount('http://', adapter)
+        self.session.mount('https://', adapter)
+        
+        # Démarrage du PlaywrightWorker (Singleton par fetcher)
+        self.playwright_worker = PlaywrightWorker(self.logger, self.user_agent)
+        self.playwright_worker.start()
+        
+    def close(self):
+        self.session.close()
+        if self.playwright_worker.is_alive():
+            self.playwright_worker.stop()
+            self.playwright_worker.join(timeout=5.0)
 
     def fetch(self, url: str, is_allowed_domain: bool = True, on_resource=None, storage_router=None) -> tuple[bytes, str, str, str, str]:
         self.logger.info(f"Fetching: {url}")
@@ -124,7 +224,7 @@ class DynamicFetcher:
         
         for attempt in range(current_retries):
             try:
-                with requests.get(url, headers=headers, stream=True, timeout=current_timeout, verify=False) as response:
+                with self.session.get(url, headers=headers, stream=True, timeout=current_timeout, verify=False) as response:
                     response.raise_for_status()
                     
                     content_type = response.headers.get('Content-Type', 'text/html').lower()
@@ -193,7 +293,7 @@ class DynamicFetcher:
                 error_str = str(e)
                 # Fail Fast : Si le serveur n'existe plus ou que le réseau est coupé vers cette IP, 
                 # on abandonne immédiatement pour économiser 3 retries et 1 fallback Playwright.
-                if "NameResolutionError" in error_str or "Network is unreachable" in error_str:
+                if "NameResolutionError" in error_str or "Network is unreachable" in error_str or "No route to host" in error_str:
                     self.logger.warning(f"Fast failing on deep network error for {url}: {error_str}")
                     return None, None, None, None, None
                     
@@ -345,7 +445,13 @@ class GenericCrawler:
                 
             # Les applications SPA modernes (React, Angular, Vue) utilisent souvent des fragments (#) 
             # pour la navigation (ex: annonce.html#1181). Il ne faut surtout pas supprimer le '#'.
+            # MAIS pour les pages traditionnelles (ex: .php), le '#' est juste une ancre.
             full_url = urljoin(base_url, tag_url).rstrip('?')
+            parsed_full = urlparse(full_url)
+            if parsed_full.path.lower().endswith('.php') and parsed_full.fragment:
+                # Reconstruire sans le fragment
+                full_url = full_url.split('#')[0]
+                
             if not full_url.startswith(('http://', 'https://')): 
                 return
             
@@ -408,8 +514,103 @@ class GenericCrawler:
         except Exception as e:
             self.logger.warning(f"Error parsing JSON for URLs from {parent_url}: {e}")
 
+
+    def _process_single_url(self, url, depth, node_id, parent_url, domain_prefix, len_visited, visited, stats):
+        try:
+            if stats["pages_crawled"] > 0:
+                time.sleep(self.crawl_delay)
+                
+            def on_intercepted_resource(res_url, res_content, res_content_type):
+                if res_url in visited: return
+                visited.add(res_url) # Not 100% thread safe but ok for intercept cache
+                try:
+                    res_uploaded = self.storage_router.upload_to_minio(
+                        url=res_url,
+                        content=res_content,
+                        content_type=res_content_type,
+                        node_id=f"intercepted_{len_visited}",
+                        university_id=self.university_id,
+                        domain_prefix=domain_prefix,
+                        depth=depth,
+                        parent_url=url,
+                        http_status=200
+                    )
+                    stats["intercepted_resources"] += 1
+                    stats["urls_intercepted"].append(res_url)
+                    stats["logs"].append({"url": res_url, "status": "success (intercepted)", "type": res_content_type})
+                    res_bucket = self.storage_router._get_bucket_by_type(res_content_type, res_url)
+                    if not res_uploaded:
+                        stats["skipped_by_hash"] += 1
+                        stats["urls_skipped"].append(res_url)
+                    else:
+                        if res_bucket not in stats["downloaded_by_bucket"]:
+                            stats["downloaded_by_bucket"][res_bucket] = 0
+                        stats["downloaded_by_bucket"][res_bucket] += 1
+                        
+                except Exception as e:
+                    self.logger.error(f"Error saving intercepted resource {res_url}: {e}")
+                    stats["errors"] += 1
+                    stats["urls_errors"].append(res_url)
+                    stats["logs"].append({"url": res_url, "status": "error (intercepted)", "error": str(e)})
+
+            is_internal = self._is_allowed(url)
+            res = self.fetcher.fetch(url, is_allowed_domain=is_internal, on_resource=on_intercepted_resource, storage_router=self.storage_router)
+            if res[0] is None:
+                return [], False, url, "ignored"
+            
+            content, content_type, final_url, etag, last_modified = res
+            
+            # Filtrer les URL redirigées (ex: newsDetails.php -> login.php)
+            if final_url and is_junk_url(final_url):
+                self.logger.info(f"Ignored after redirect: {final_url}")
+                return [], False, final_url, "ignored"
+            
+            if content == b"SKIPPED":
+                uploaded = False
+                content = b"" # Reset for extract_links safety
+            else:
+                uploaded = self.storage_router.upload_to_minio(
+                    url=final_url, 
+                    content=content, 
+                    content_type=content_type, 
+                    node_id=node_id, 
+                    university_id=self.university_id,
+                    domain_prefix=domain_prefix,
+                    depth=depth,
+                    parent_url=parent_url,
+                    http_status=200,
+                    server_etag=etag,
+                    server_last_modified=last_modified
+                )
+            
+            bucket_name = self.storage_router._get_bucket_by_type(content_type, url)
+            
+            new_links_to_queue = []
+            if depth < self.max_depth:
+                if 'text/html' in content_type and self._is_allowed(final_url):
+                    links = self.extract_links(content, final_url)
+                    for idx, (new_url, is_res) in enumerate(links, 1):
+                        new_node_id = f"{node_id}_{idx}"
+                        new_links_to_queue.append((new_url, depth + 1, new_node_id, url))
+                elif 'json' in content_type.lower():
+                    # Quick logic to extract URLs from JSON
+                    try:
+                        content_str = content.decode('utf-8', errors='ignore')
+                        urls_in_json = re.findall(r'(https?://[^\s"\'\\,\[\]{}<>]+|/[a-zA-Z0-9_\-\./]+\.(?:pdf|doc|docx|xls|xlsx|ppt|pptx|png|jpg|jpeg|json))', content_str, re.IGNORECASE)
+                        for idx, raw_url in enumerate(urls_in_json):
+                            new_url = urljoin(final_url, raw_url)
+                            new_node_id = f"{node_id}_json_{idx}"
+                            new_links_to_queue.append((new_url, depth + 1, new_node_id, final_url))
+                    except: pass
+            
+            return new_links_to_queue, False, url, {"status": "success", "type": content_type, "uploaded": uploaded, "bucket": bucket_name}
+            
+        except Exception as e:
+            self.logger.error(f"Error processing {url}: {e}")
+            return [], True, url, {"status": "error", "error": str(e)}
+
     def start_crawl(self):
-        self.logger.info(f"Starting crawl for {self.university_id} at {self.seed_url}")
+        self.logger.info(f"Starting crawl for {self.university_id} at {self.seed_url} using ThreadPool (max_workers=5)")
         
         queue = deque([(self.seed_url, 0, "link_0", "")])
         visited = set()
@@ -429,132 +630,91 @@ class GenericCrawler:
             "urls_errors": []
         }
         
-        import time
-        import json
-        
         domain_prefix = urlparse(self.seed_url).netloc
-        
-        # Construire l'index mémoire des fichiers existants dans MinIO
         self.storage_router.build_memory_index(domain_prefix, ["raw-web-html", "raw-documents", "raw-images", "raw-json"])
         
-        while queue:
-            url, depth, node_id, parent_url = queue.popleft()
-            
-            if url in visited or depth > self.max_depth:
-                stats["ignored"] += 1
-                stats["urls_ignored"].append(url)
-                continue
-            
-            # Filtrer le bruit AVANT de consommer un slot
-            if is_junk_url(url):
-                self.logger.debug(f"Skipping junk URL: {url}")
-                stats["ignored"] += 1
-                stats["urls_ignored"].append(url)
-                continue
-                
-            visited.add(url)
-            
-            def on_intercepted_resource(res_url, res_content, res_content_type):
-                if res_url in visited: return
-                visited.add(res_url)
-                try:
-                    res_uploaded = self.storage_router.upload_to_minio(
-                        url=res_url,
-                        content=res_content,
-                        content_type=res_content_type,
-                        node_id=f"intercepted_{len(visited)}",
-                        university_id=self.university_id,
-                        domain_prefix=domain_prefix,
-                        depth=depth,
-                        parent_url=url,
-                        http_status=200
-                    )
-                    stats["intercepted_resources"] += 1
-                    stats["urls_intercepted"].append(res_url)
-                    stats["logs"].append({"url": res_url, "status": "success (intercepted)", "type": res_content_type})
-                    res_bucket = self.storage_router._get_bucket_by_type(res_content_type, res_url)
-                    if not res_uploaded:
-                        stats["skipped_by_hash"] += 1
-                        stats["urls_skipped"].append(res_url)
-                    else:
-                        if res_bucket not in stats["downloaded_by_bucket"]:
-                            stats["downloaded_by_bucket"][res_bucket] = 0
-                        stats["downloaded_by_bucket"][res_bucket] += 1
-                        
-                    # Extraction des PDFs cachés dans le JSON
-                    if depth < self.max_depth and ('json' in res_content_type.lower()):
-                        self._extract_urls_from_json(res_content, res_url, depth, f"intercept_{len(visited)}", queue, visited)
-
-                except Exception as e:
-                    self.logger.error(f"Error saving intercepted resource {res_url}: {e}")
-                    stats["errors"] += 1
-                    stats["urls_errors"].append(res_url)
-                    stats["logs"].append({"url": res_url, "status": "error (intercepted)", "error": str(e)})
-
-            try:
-                if stats["pages_crawled"] > 0:
-                    time.sleep(self.crawl_delay)
-                    
-                is_internal = self._is_allowed(url)
-                res = self.fetcher.fetch(url, is_allowed_domain=is_internal, on_resource=on_intercepted_resource, storage_router=self.storage_router)
-                if res[0] is None:
-                    stats["ignored"] += 1
-                    stats["urls_ignored"].append(url)
-                    continue
-                content, content_type, final_url, etag, last_modified = res
-                
-                if content == b"SKIPPED":
-                    uploaded = False
-                    content = b"" # Reset for extract_links safety although we won't extract links from binaries
-                else:
-                    uploaded = self.storage_router.upload_to_minio(
-                        url=final_url, 
-                        content=content, 
-                        content_type=content_type, 
-                        node_id=node_id, 
-                        university_id=self.university_id,
-                        domain_prefix=domain_prefix,
-                        depth=depth,
-                        parent_url=parent_url,
-                        http_status=200,
-                        server_etag=etag,
-                        server_last_modified=last_modified
-                    )
-                
-                stats["pages_crawled"] += 1
-                stats["urls_crawled"].append(url)
-                stats["logs"].append({"url": url, "status": "success", "type": content_type})
-                
-                # Mise à jour des stats par bucket
-                bucket_name = self.storage_router._get_bucket_by_type(content_type, url)
-                if not uploaded:
-                    stats["skipped_by_hash"] += 1
-                    stats["urls_skipped"].append(url)
-                else:
-                    if bucket_name not in stats["downloaded_by_bucket"]:
-                        stats["downloaded_by_bucket"][bucket_name] = 0
-                    stats["downloaded_by_bucket"][bucket_name] += 1
-                
-                if depth < self.max_depth:
-                    if 'text/html' in content_type and self._is_allowed(final_url):
-                        links = self.extract_links(content, final_url)
-                        for idx, (new_url, is_res) in enumerate(links, 1):
-                            if new_url not in visited:
-                                new_node_id = f"{node_id}_{idx}"
-                                queue.append((new_url, depth + 1, new_node_id, url))
-                    elif 'json' in content_type.lower():
-                        self._extract_urls_from_json(content, final_url, depth, node_id, queue, visited)
-                            
-                            
-            except Exception as e:
-                self.logger.error(f"Error processing {url}: {e}")
-                stats["errors"] += 1
-                stats["urls_errors"].append(url)
-                stats["logs"].append({"url": url, "status": "error", "error": str(e)})
-                if depth == 0:
-                    self.logger.critical("Seed URL failed. Aborting crawler.")
-                    break
+        # lock for stats update
+        stats_lock = threading.Lock()
         
+        with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+            futures = {}
+            
+            while (queue or futures):
+                
+                # Fill the thread pool with tasks from the queue
+                while queue and len(futures) < 5:
+                    url, depth, node_id, parent_url = queue.popleft()
+                    
+                    if url in visited or depth > self.max_depth:
+                        with stats_lock:
+                            stats["ignored"] += 1
+                            stats["urls_ignored"].append(url)
+                        continue
+                        
+                    if is_junk_url(url):
+                        self.logger.debug(f"Skipping junk URL: {url}")
+                        with stats_lock:
+                            stats["ignored"] += 1
+                            stats["urls_ignored"].append(url)
+                        continue
+                        
+                    visited.add(url)
+                    
+                    future = executor.submit(
+                        self._process_single_url,
+                        url, depth, node_id, parent_url, domain_prefix, len(visited), visited, stats
+                    )
+                    futures[future] = url
+
+                # Wait for at least one future to complete
+                if futures:
+                    done, _ = concurrent.futures.wait(
+                        futures.keys(), return_when=concurrent.futures.FIRST_COMPLETED
+                    )
+                    
+                    for future in done:
+                        url = futures.pop(future)
+                        try:
+                            new_links, is_seed_error, processed_url, result_data = future.result()
+                            
+                            with stats_lock:
+                                if result_data == "ignored":
+                                    stats["ignored"] += 1
+                                    stats["urls_ignored"].append(processed_url)
+                                elif isinstance(result_data, dict) and result_data.get("status") == "error":
+                                    stats["errors"] += 1
+                                    stats["urls_errors"].append(processed_url)
+                                    stats["logs"].append({"url": processed_url, "status": "error", "error": result_data.get("error")})
+                                elif isinstance(result_data, dict) and result_data.get("status") == "success":
+                                    stats["pages_crawled"] += 1
+                                    stats["urls_crawled"].append(processed_url)
+                                    stats["logs"].append({"url": processed_url, "status": "success", "type": result_data.get("type")})
+                                    bucket_name = result_data.get("bucket")
+                                    if not result_data.get("uploaded"):
+                                        stats["skipped_by_hash"] += 1
+                                        stats["urls_skipped"].append(processed_url)
+                                    else:
+                                        if bucket_name not in stats["downloaded_by_bucket"]:
+                                            stats["downloaded_by_bucket"][bucket_name] = 0
+                                        stats["downloaded_by_bucket"][bucket_name] += 1
+                            
+                            if is_seed_error and depth == 0:
+                                self.logger.critical("Seed URL failed. Aborting crawler.")
+                                queue.clear()
+                                futures.clear()
+                                break
+                                
+                            for new_url, new_depth, new_node_id, new_parent in new_links:
+                                if new_url not in visited and new_url not in [q[0] for q in queue]:
+                                    queue.append((new_url, new_depth, new_node_id, new_parent))
+                                    
+                        except Exception as e:
+                            self.logger.error(f"Error processing {url} in thread: {e}")
+                            
+        # Clean up
+        if hasattr(self.fetcher, 'close'):
+            self.fetcher.close()
+
         self.logger.info("==================================================")
         self.logger.info("                  URL DETAILS                     ")
         self.logger.info("==================================================")
@@ -620,3 +780,15 @@ class GenericCrawler:
             force_bucket="raw-logs"
         )
         self.logger.info("Stats uploaded to raw-logs.")
+        
+        # --- Platform Observability Logging ---
+        job_name = f"scraper_{self.university_id.lower()}"
+        status = "SUCCESS" if stats["errors"] == 0 else "FAILED"
+        error_msg = f"{stats['errors']} errors encountered" if stats["errors"] > 0 else None
+        
+        try:
+            pl = PlatformLogger()
+            pl.log_job_status(job_name, status, error_msg)
+        except Exception as e:
+            self.logger.warning(f"Could not push to PlatformLogger: {e}")
+
