@@ -22,23 +22,22 @@ OpenAlex API ──────────► Fetcher (Cursor Pagination) ─�
                                                                 ▼
                                                     Spark Silver (Tika + Nettoyage)
                                                                 │
-                                                        ┌───────┴───────┐
-                                                        ▼               ▼
-                                                Apache Hudi      Elasticsearch
-                                              (Tables Silver)   (Index Full-Text)
-                                                        │
-                                                        ▼
-                                            Spark Gold (NLP + Embedding)
-                                                        │
-                                                ┌───────┴───────┐
-                                                ▼               ▼
-                                            Qdrant          Hive Metastore
-                                        (Vecteurs e5)      (Catalogue SQL)
+                                                                ▼
+                                                            Apache Hudi
+                                                          (Tables Silver)
                                                                 │
-                                                        ┌───────┴───────┐
-                                                        ▼               ▼
-                                                    Metabase      Spark Thrift
-                                                    (KPI/BI)      (JDBC/SQL)
+                                                ┌───────────────┴───────────────┐
+                                                ▼                               ▼
+                                            Spark Gold                    Hive Metastore
+                                                │                         (Catalogue SQL)
+                                        ┌───────┴───────┐                       │
+                                        ▼               ▼                       ▼
+                                Elasticsearch      NLP + Chunking         Spark Thrift
+                              (Index Full-Text)         │                  (JDBC/SQL)
+                                                        ▼                       │
+                                                      Qdrant                    ▼
+                                                  (Vecteurs e5)              Metabase
+                                                                             (KPI/BI)
 ```
 
 ---
@@ -66,7 +65,9 @@ OpenAlex API ──────────► Fetcher (Cursor Pagination) ─�
 
 ## 📋 Prérequis
 
-- **Docker Desktop** ≥ 24.0 avec Docker Compose v2
+- **Moteur Docker** avec Docker Compose v2 (au choix) :
+  - *Windows / Mac* : **Docker Desktop**, ou **Colima**, ou **OrbStack**
+  - *Linux / Windows WSL2* : **Docker Engine** natif
 - **RAM allouée à Docker** : minimum **10 Go** (recommandé : 12 Go)
 - **Espace disque** : ~15 Go pour les images Docker
 - **(Optionnel)** Clé API Google Gemini pour le RAG : [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
