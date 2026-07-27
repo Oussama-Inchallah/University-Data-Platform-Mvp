@@ -141,16 +141,7 @@ with tab2:
                     for res in results:
                         st.card = st.container()
                         with st.card:
-                            doc_title = res.get('title', '')
-                            if not doc_title or doc_title == "Sans titre":
-                                doc_title = res.get('type', 'Document').replace('_', ' ').title()
-                            
-                            doc_url = res.get('url', '')
-                            if doc_url:
-                                st.markdown(f"### 📄 [{doc_title}]({doc_url})")
-                            else:
-                                st.markdown(f"### 📄 {doc_title}")
-                                
+                            st.markdown(f"### 📄 {res.get('type', 'Document').replace('_', ' ').title()}")
                             st.caption(f"🏫 Faculté : **{res.get('faculty', 'Inconnu')}** | 🌍 Langue : {res.get('language', 'Inconnu')} | 🎯 Score : {res.get('score', 0):.2f}")
                             st.markdown(res.get('snippet', ''), unsafe_allow_html=True)
                             st.divider()

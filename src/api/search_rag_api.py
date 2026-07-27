@@ -205,8 +205,7 @@ def search_keyword(
                 "snippet": snippet,
                 "title": src.get("title", "Sans titre"),
                 "faculty": src.get("source_system", "Unknown"),
-                "language": src.get("language", "Unknown"),
-                "url": src.get("url", "")
+                "language": src.get("language", "Unknown")
             })
             
         facets = response.get("aggregations", {}).get("faculties", {}).get("buckets", [])
