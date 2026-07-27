@@ -1,0 +1,30 @@
+# src/processing/config/universal_routing.yaml
+
+entities:
+  # Règle pour les actualités (Placée en premier pour capturer "Avis", "Annonces", même s'ils parlent de Masters)
+  - target_table: "university_news"
+    url_pattern: "(?i).*actualites?|.*news|.*evenements?|.*events?|.*actus?|.*annonces?|.*announcements?|.*recrut.*|.*avis|.*notices?|.*presse|.*press|.*communications?|.*organigrammes?|.*presentations?|.*missions?|.*conseils?|.*councils?|.*helps?|.*partenariats?|.*partnerships?|.*testimonials?|.*index|.*accueil|.*home|.*evnmt.*|.*خبر.*|.*إعلان.*|.*إخبار.*|.*حدث.*|.*صحافة.*|.*تواصل.*|.*تقديم.*|.*مهمة.*|.*مجلس.*|.*شراكة.*|.*استقبال.*|.*توظيف.*|.*مباراة.*|.*النتيجة.*|.*لائحة.*|.*المترشحين.*|.*دورة.*|.*مباريات.*"
+
+  # Règle pour le catalogue de cours (Pédagogie)
+  - target_table: "course_catalog"
+    url_pattern: "(?i).*formations?|.*filieres?|.*departements?|.*departments?|.*cours?|.*modules?|.*initiales?|.*continues?|.*masters?|.*mst|.*lst|.*licences?|.*bachelors?|.*emplois?.*temps|.*schedules?|.*inscriptions?|.*enrollments?|.*registrations?|.*preinscriptions?|.*candidatures?|.*applications?|.*resultats?|.*results?|.*scholar.*|.*moodle.*|.*examens?|.*exams?|.*تكوين.*|.*مسلك.*|.*شعبة.*|.*درس.*|.*وحدة.*|.*أساسي.*|.*مستمر.*|.*ماستر.*|.*إجازة.*|.*تسجيل.*|.*نتيجة.*|.*جدول.*|.*أوقات.*|.*امتحان.*"
+
+  # Règle pour les profils des professeurs
+  - target_table: "faculty_profiles"
+    url_pattern: "(?i).*professeurs?|.*professors?|.*enseignants?|.*teachers?|.*annuaires?|.*directories?|.*staff|.*profiles?|.*contacts?|.*abouts?|.*أستاذ.*|.*مدرس.*|.*دليل.*|.*موظف.*|.*شخصي.*|.*محاضر.*|.*مفتش.*"
+
+  # Règle pour les profils d'étudiants
+  - target_table: "students_external_profiles"
+    url_pattern: "(?i).*etudiants?|.*students?|.*alumnis?|.*laureats?|.*graduates?|.*vie.*|.*life.*|.*estudiantine.*|.*activites?|.*activities?|.*forums?|.*entreprises?|.*enterprises?|.*carrieres?|.*careers?|.*entrepreneurship.*|.*services?|.*espace_etu.*|.*طالب.*|.*خريج.*|.*حياة.*|.*طلابية.*|.*نشاط.*|.*منتدى.*|.*مقاولة.*|.*مهنة.*|.*خدمات.*"
+
+  # Règle pour la recherche
+  - target_table: "research_publications"
+    url_pattern: "(?i).*recherche.*|.*research.*|.*publications?|.*laboratoires?|.*laboratories?|.*theses?|.*thesis.*|.*cedoc.*|.*doi.*|.*antiplagiat.*|.*plagiarism.*|.*soutenances?|.*defenses?|.*doctorats?|.*doctorates?|.*بحث.*|.*منشور.*|.*مختبر.*|.*أطروحة.*|.*مناقشة.*|.*دكتوراه.*|.*انتحال.*"
+
+  # Règle pour le registre documentaire (PDFs, formulaires, etc.)
+  - target_table: "documents_registry"
+    url_pattern: "(?i).*/documents?/.*|.*/docs?/.*|.*/telechargements?/.*|.*/downloads?/.*|.*\\.pdf|.*\\.docx?|.*\\.xlsx?|.*\\.pptx?"
+
+  # Règle par défaut (Contenu non classifié)
+  - target_table: "unclassified_contents"
+    url_pattern: ".*"

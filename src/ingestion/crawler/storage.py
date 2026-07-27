@@ -1,21 +1,58 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
+"""
+Gestionnaire de Stockage S3 (MinIO)
+-----------------------------------
+Ce module gère l'enregistrement des fichiers bruts (HTML, documents, images)
+et de leurs métadonnées (fichiers JSON) dans MinIO (S3) lors du crawling.
+"""
 import hashlib
 import logging
 from io import BytesIO
 from minio import Minio
 from minio.error import S3Error
 from datetime import datetime
-from urllib.parse import urlparse, quote
+from urllib.parse import urlparse, quote, unquote
+import mimetypes
+import json
 
 class StorageRouter:
-    def __init__(self, endpoint="minio:9000", access_key="minioadmin", secret_key="minioadmin"):
+    def __init__(self, endpoint="minio:9000", access_key="minioadmin", secret_key="minioadmin", execution_date=None):
         self.logger = logging.getLogger(__name__)
+        self.execution_date = execution_date
         self.client = Minio(
             endpoint,
             access_key=access_key,
             secret_key=secret_key,
             secure=False
         )
+        self.memory_index = {}
         
+    def build_memory_index(self, domain_prefix: str, buckets: list):
+        """
+        Construit un index en mémoire des fichiers déjà téléchargés pour ce site
+        en scannant tous les chemins (dates) dans MinIO.
+        """
+        self.logger.info(f"Building memory index for {domain_prefix} across buckets...")
+        count = 0
+        for bucket in buckets:
+            try:
+                objects = self.client.list_objects(bucket, prefix=domain_prefix, recursive=True)
+                for obj in objects:
+                    if obj.object_name.endswith('_metadata.json'):
+                        continue
+                    file_name = obj.object_name.split('/')[-1]
+                    # list_objects renvoie par ordre alphabétique, donc les dates récentes écrasent les anciennes
+                    self.memory_index[file_name] = {"bucket": bucket, "object_name": obj.object_name}
+                    count += 1
+            except S3Error as e:
+                if e.code != 'NoSuchBucket':
+                    self.logger.warning(f"Error scanning bucket {bucket}: {e}")
+        self.logger.info(f"Memory index built with {count} unique files.")
+
     def _get_bucket_by_type(self, content_type: str, url: str) -> str:
         if 'text/html' in content_type:
             return "raw-web-html"
@@ -29,32 +66,17 @@ class StorageRouter:
     def compute_sha256(self, content: bytes) -> str:
         return hashlib.sha256(content).hexdigest()
         
-    def upload_to_minio(self, url: str, content: bytes, content_type: str, node_id: str, university_id: str, domain_prefix: str, depth: int = 0, parent_url: str = "", http_status: int = 200, force_bucket: str = None):
-        bucket_name = force_bucket if force_bucket else self._get_bucket_by_type(content_type, url)
-        
+    def _generate_file_name(self, url: str, content_type: str) -> str:
         parsed_url = urlparse(url)
-        now = datetime.utcnow()
-        
-        from urllib.parse import unquote
-        # On décode l'URL pour transformer les %D8%A5 en caractères arabes réels
         decoded_path = unquote(parsed_url.path)
-        
-        # Extraction stricte du nom du fichier depuis le chemin
         file_name = decoded_path.split('/')[-1]
         
         if not file_name:
-            # L'URL se termine par un slash (ex: /biologie/ ou /img/)
             path_parts_full = [p for p in decoded_path.split('/') if p]
-            
-            import mimetypes
-            # Deviner l'extension d'après le vrai Content-Type (ex: image/jpeg -> .jpg)
             ext = mimetypes.guess_extension(content_type.split(';')[0]) or ""
-            
             if 'text/html' in content_type:
                 suffix = ".html"
             else:
-                # Si ce n'est pas du HTML, on utilise l'extension devinée (ex: .jpg, .pdf)
-                # Si mimetypes ne trouve rien et que l'URL n'a pas d'extension, on ajoute juste le suffixe vide.
                 suffix = ext if ext else ""
                 
             if path_parts_full:
@@ -62,10 +84,6 @@ class StorageRouter:
             else:
                 file_name = f"index{suffix}" if suffix else "unknown_file"
             
-        # Ajout systématique d'un petit hash (10 caractères) basé sur l'URL complète.
-        # Cela garantit qu'aucune page n'écrase une autre, même si elles ont le même nom 
-        # (ex: bd2c.fsac.ma/ et isi.fsac.ma/ donneront index-index_a1b2c3d4e5.html)
-        import hashlib
         url_hash = hashlib.md5(url.encode('utf-8')).hexdigest()[:10]
         
         if '.' in file_name:
@@ -74,58 +92,92 @@ class StorageRouter:
         else:
             file_name = f"{file_name}_{url_hash}"
 
-        # Si c'est du HTML et qu'il n'y a pas d'extension, on s'assure qu'il finit par .html
         if 'text/html' in content_type and not file_name.endswith('.html'):
             file_name += ".html"
             
-        # TRONCATURE SÉCURITÉ OS : Le nom de fichier ne doit pas dépasser 255 octets (limite Linux Ext4/NTFS).
-        # Certains slugs CMS (ex: une phrase entière avec des tirets) dépassent cette limite.
-        # S'il est trop long, on le coupe à 150 caractères et on ajoute un petit hash pour garantir l'unicité.
         file_bytes_len = len(file_name.encode('utf-8'))
         if file_bytes_len > 200:
-            import hashlib
             name_hash = hashlib.md5(file_name.encode('utf-8')).hexdigest()[:8]
             if '.' in file_name:
                 base_name, ext = file_name.rsplit('.', 1)
                 file_name = f"{base_name[:150]}_{name_hash}.{ext}"
             else:
                 file_name = f"{file_name[:150]}_{name_hash}"
+                
+        return file_name
         
-        
-        # Le storage_path correspond à la structure partitionnée (sans l'arborescence du site)
-        # On utilise strictement le domain_prefix (ex: fsac.univh2c.ma) même si l'URL vient d'ailleurs
-        storage_path = f"{domain_prefix}/year={now.year:04d}/month={now.month:02d}/day={now.day:02d}/{file_name}"
-            
-        object_name = storage_path
-            
+    def get_existing_metadata(self, url: str, content_type: str) -> dict:
+        """
+        Vérifie si le fichier existe dans l'index mémoire et récupère ses métadonnées MinIO.
+        """
+        file_name = self._generate_file_name(url, content_type)
+        if file_name in self.memory_index:
+            entry = self.memory_index[file_name]
+            try:
+                stat = self.client.stat_object(entry['bucket'], entry['object_name'])
+                return {
+                    "sha256": stat.metadata.get('x-amz-meta-sha256', ''),
+                    "server_etag": stat.metadata.get('x-amz-meta-server-etag', ''),
+                    "server_last_modified": stat.metadata.get('x-amz-meta-server-last-modified', ''),
+                    "bucket": entry['bucket'],
+                    "object_name": entry['object_name']
+                }
+            except S3Error:
+                pass
+        return {}
+
+    def upload_to_minio(self, url: str, content: bytes, content_type: str, node_id: str, university_id: str, domain_prefix: str, depth: int = 0, parent_url: str = "", http_status: int = 200, force_bucket: str = None, server_etag: str = "", server_last_modified: str = ""):
+        bucket_name = force_bucket if force_bucket else self._get_bucket_by_type(content_type, url)
+        now = datetime.utcnow()
+        file_name = self._generate_file_name(url, content_type)
         content_hash = self.compute_sha256(content)
         
+        # Dédoublonnage via index mémoire
+        if file_name in self.memory_index:
+            entry = self.memory_index[file_name]
+            try:
+                stat = self.client.stat_object(entry['bucket'], entry['object_name'])
+                existing_hash = stat.metadata.get('x-amz-meta-sha256')
+                if existing_hash == content_hash:
+                    self.logger.info(f"Skipping {url}: File unchanged (Hash Match).")
+                    return False
+            except S3Error:
+                pass
+        
+        # Partitionnement
+        if hasattr(self, 'execution_date') and self.execution_date:
+            try:
+                y, m, d = self.execution_date.split('-')
+                date_path = f"year={y}/month={m}/day={d}"
+            except ValueError:
+                date_path = f"year={now.year:04d}/month={now.month:02d}/day={now.day:02d}"
+        else:
+            date_path = f"year={now.year:04d}/month={now.month:02d}/day={now.day:02d}"
+            
+        storage_path = f"{domain_prefix}/{date_path}/{file_name}"
+        object_name = storage_path
+        
+        # Gestion des collisions si le fichier existe DANS LE MEME DOSSIER mais est différent
         try:
             stat = self.client.stat_object(bucket_name, object_name)
             existing_hash = stat.metadata.get('x-amz-meta-sha256')
-            if existing_hash == content_hash:
-                self.logger.info(f"Skipping {url}: File unchanged (Hash Match).")
-                return False
-            else:
-                # COLLISION DE NOM DÉTECTÉE !
-                # Un fichier avec ce nom existe déjà, mais le contenu est différent.
-                # On ajoute le chemin des dossiers au nom de fichier pour le rendre unique (ex: MR_GL.pdf).
+            if existing_hash and existing_hash != content_hash:
+                parsed_url = urlparse(url)
+                decoded_path = unquote(parsed_url.path)
                 path_parts = [p for p in decoded_path.split('/') if p][:-1]
                 if path_parts:
                     dir_prefix = "_".join(path_parts)
                     file_name = f"{dir_prefix}_{file_name}"
-                    storage_path = f"{domain_prefix}/year={now.year:04d}/month={now.month:02d}/day={now.day:02d}/{file_name}"
+                    storage_path = f"{domain_prefix}/{date_path}/{file_name}"
                     object_name = storage_path
-        except S3Error as e:
-            if e.code != 'NoSuchKey':
-                self.logger.warning(f"Error checking MinIO stat for {object_name}: {e}")
+        except S3Error:
+            pass
 
-        # Fonction utilitaire pour éviter que l'encodage URL (ex: mots arabes) ne dépasse la limite de 2KB S3
         def safe_quote(text: str, max_length: int = 300) -> str:
+            if not text: return ""
             encoded = quote(text)
             return encoded[:max_length] if len(encoded) > max_length else encoded
 
-        # Contrat Strict de Métadonnées S3 (S3 exige des chaînes US-ASCII uniquement et limitées en taille)
         s3_metadata = {
             "source_system": university_id,
             "source_url": safe_quote(url, 400),
@@ -133,6 +185,8 @@ class StorageRouter:
             "http_status": str(http_status),
             "content_type": content_type,
             "sha256": content_hash,
+            "server_etag": safe_quote(server_etag, 200),
+            "server_last_modified": safe_quote(server_last_modified, 200),
             "depth": str(depth),
             "parent_url": safe_quote(parent_url, 400),
             "storage_bucket": bucket_name,
@@ -141,7 +195,6 @@ class StorageRouter:
             "file_size_bytes": str(len(content))
         }
         
-        # Métadonnées d'origine non encodées pour le fichier JSON compagnon (UTF-8 supporté)
         json_metadata = {
             "source_system": university_id,
             "source_url": url,
@@ -149,6 +202,8 @@ class StorageRouter:
             "http_status": str(http_status),
             "content_type": content_type,
             "sha256": content_hash,
+            "server_etag": server_etag,
+            "server_last_modified": server_last_modified,
             "depth": str(depth),
             "parent_url": parent_url,
             "storage_bucket": bucket_name,
@@ -157,7 +212,6 @@ class StorageRouter:
             "file_size_bytes": len(content)
         }
         
-        # 1. Upload du fichier principal
         content_stream = BytesIO(content)
         self.client.put_object(
             bucket_name,
@@ -169,11 +223,12 @@ class StorageRouter:
         )
         self.logger.info(f"Uploaded {url} to {bucket_name}/{object_name}")
         
-        # 2. Upload du fichier _metadata.json compagnon
-        import json
+        # Mise à jour de l'index en mémoire
+        self.memory_index[file_name] = {"bucket": bucket_name, "object_name": object_name}
+        
         base_name = file_name.rsplit('.', 1)[0] if '.' in file_name else file_name
         metadata_file_name = f"{base_name}_metadata.json"
-        metadata_path = f"{domain_prefix}/year={now.year:04d}/month={now.month:02d}/day={now.day:02d}/{metadata_file_name}"
+        metadata_path = f"{domain_prefix}/{date_path}/{metadata_file_name}"
         
         metadata_content = json.dumps(json_metadata, indent=2, ensure_ascii=False).encode('utf-8')
         metadata_stream = BytesIO(metadata_content)

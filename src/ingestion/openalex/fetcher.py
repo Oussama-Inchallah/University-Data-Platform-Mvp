@@ -1,8 +1,20 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
+"""
+Extracteur de données OpenAlex (API)
+------------------------------------
+Ce module interroge l'API publique OpenAlex pour récupérer les publications
+scientifiques et les travaux de recherche associés à une université.
+"""
 import logging
 import time
 import requests
 from urllib.parse import urlencode
 from src.ingestion.crawler.storage import StorageRouter
+from src.processing.core.utils.platform_logger import PlatformLogger
 
 class OpenAlexFetcher:
     """
@@ -11,17 +23,19 @@ class OpenAlexFetcher:
     """
     BASE_URL = "https://api.openalex.org/works"
 
-    def __init__(self, per_page: int = 200, max_retries: int = 3):
+    def __init__(self, per_page: int = 200, max_retries: int = 3, execution_date: str = None):
         self.logger = logging.getLogger(__name__)
         logging.basicConfig(level=logging.INFO)
         
         self.per_page = per_page
         self.max_retries = max_retries
-        self.storage = StorageRouter()
+        self.storage = StorageRouter(execution_date=execution_date)
+        self.platform_logger = PlatformLogger()
 
-    def fetch_institution_works(self, institution_id: str):
+    def fetch_institution_works(self, institution_id: str, institution_name: str):
         """
         Fetches all works for a given institution using cursor pagination.
+        Saves each API page as a separate JSON file in MinIO using the institution's name.
         Saves each API page as a separate JSON file in MinIO.
         """
         cursor = "*"
@@ -29,6 +43,9 @@ class OpenAlexFetcher:
         total_works_saved = 0
         
         self.logger.info(f"Starting OpenAlex ingestion for institution: {institution_id}")
+        
+        # Build memory index to prevent redownloading existing files in future DAG runs
+        self.storage.build_memory_index(f"openalex/{institution_name}", ["raw-json"])
         
         while cursor:
             params = {
@@ -46,8 +63,10 @@ class OpenAlexFetcher:
             response_json, raw_bytes, status_code = self._make_request(url)
             
             if not response_json:
-                self.logger.error(f"Failed to fetch page {page_num}. Aborting loop.")
-                break
+                error_msg = f"Failed to fetch page {page_num} for {institution_name} after {self.max_retries} retries. Network Unreachable."
+                self.logger.error(error_msg)
+                self.platform_logger.log_job_status(f"ingest_openalex_{institution_name}", "FAILED", error_msg)
+                raise ConnectionError(error_msg)
                 
             # Check for results
             results = response_json.get("results", [])
@@ -68,8 +87,8 @@ class OpenAlexFetcher:
                 content=raw_bytes,
                 content_type="application/json",
                 node_id="openalex-api",
-                university_id=institution_id,
-                domain_prefix=f"openalex/{institution_id}",
+                university_id=institution_name,
+                domain_prefix=f"openalex/{institution_name}",
                 depth=0,
                 parent_url=f"https://openalex.org/{institution_id}",
                 http_status=status_code
@@ -89,6 +108,7 @@ class OpenAlexFetcher:
             time.sleep(1.0)
             
         self.logger.info(f"Finished. Total works saved: {total_works_saved} across {page_num} pages.")
+        self.platform_logger.log_job_status(f"ingest_openalex_{institution_name}", "SUCCESS")
 
     def _make_request(self, url: str):
         headers = {"User-Agent": "University-Data-Platform/1.0"}

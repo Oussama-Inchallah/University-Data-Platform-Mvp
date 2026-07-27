@@ -1,0 +1,25 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Installer les outils de base
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copier le requirements
+COPY infra/docker/requirements.api.txt /app/requirements.txt
+
+# Installer les dependances en forçant la version CPU de PyTorch pour éviter de télécharger CUDA (gain de ~2.5 Go)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r requirements.txt
+
+# Pre-telecharger le modele HuggingFace lors du build pour un demarrage instantane
+RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('intfloat/multilingual-e5-small')"
+
+# Exposer le port de l'API
+EXPOSE 8000
+
+# Commande de lancement (pointant vers le volume monte en local)
+CMD ["uvicorn", "src.api.search_rag_api:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

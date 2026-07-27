@@ -18,10 +18,30 @@ x-airflow-common: &airflow-common
     AIRFLOW__LOGGING__REMOTE_LOGGING: 'true'
     AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 's3://raw-logs/airflow-logs'
     AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: 'minio_s3_log'
+    # Configuration SMTP pour Alertes Email
+    AIRFLOW__SMTP__SMTP_HOST: 'smtp.gmail.com'
+    AIRFLOW__SMTP__SMTP_STARTTLS: 'True'
+    AIRFLOW__SMTP__SMTP_SSL: 'False'
+    AIRFLOW__SMTP__SMTP_PORT: 587
+    AIRFLOW__SMTP__SMTP_USER: 'alfagroza003@gmail.com'
+    AIRFLOW__SMTP__SMTP_PASSWORD: '${SMTP_PASSWORD}'
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: 'alfagroza003@gmail.com'
+    # -----------------------------------
     PYTHONPATH: /opt/airflow
-    AIRFLOW_CONN_SPARK_DEFAULT: "spark://spark-master:7077"
+    AIRFLOW_CONN_SPARK_DEFAULT: '{"conn_type": "spark", "host": "local[1]"}'
+    AIRFLOW_CONN_SPARK_GOLD: '{"conn_type": "spark", "host": "local[1]"}'
+    SPARK_HOME: /opt/spark
+    JAVA_HOME: /usr/lib/jvm/java-17-openjdk-amd64
+    ELASTICSEARCH_URL: "http://elasticsearch:9200"
+    QDRANT_URL: "http://qdrant:6333"
+    GEMINI_API_KEY: ${GEMINI_API_KEY:-""}
+    TIKA_CLIENT_ONLY: 'True'
+    TIKA_SERVER_ENDPOINT: 'http://tika:9998'
+    HF_HUB_OFFLINE: '1'
+    HF_HOME: '/opt/airflow/.cache/huggingface'
   volumes:
     - ../../src:/opt/airflow/src
+    - ../../src:/app
     - ../../dags:/opt/airflow/dags
     - ./airflow-logs:/opt/airflow/logs
   user: "${AIRFLOW_UID:-50000}:0"
@@ -92,7 +112,7 @@ services:
     command: version
     environment:
       <<: *airflow-common-env
-      _AIRFLOW_DB_UPGRADE: 'true'
+      _AIRFLOW_DB_MIGRATE: 'true'
       _AIRFLOW_WWW_USER_CREATE: 'true'
       _AIRFLOW_WWW_USER_USERNAME: ${_AIRFLOW_WWW_USER_USERNAME:-airflow}
       _AIRFLOW_WWW_USER_PASSWORD: ${_AIRFLOW_WWW_USER_PASSWORD:-airflow}
@@ -119,77 +139,159 @@ services:
     entrypoint: >
       /bin/sh -c " echo 'Waiting for MinIO to start...'; until (/usr/bin/mc alias set myminio http://minio:9000 ${MINIO_ROOT_USER:-minioadmin} ${MINIO_ROOT_PASSWORD:-minioadmin}); do sleep 2; done; echo 'Creating buckets...'; /usr/bin/mc mb myminio/raw-web-html --ignore-existing; /usr/bin/mc mb myminio/raw-documents --ignore-existing; /usr/bin/mc mb myminio/raw-images --ignore-existing; /usr/bin/mc mb myminio/raw-json --ignore-existing; /usr/bin/mc mb myminio/raw-logs --ignore-existing; /usr/bin/mc mb myminio/curated-zone --ignore-existing; echo 'Buckets created successfully.'; exit 0; "
 
-  spark-master:
-    build:
-      context: ../../
-      dockerfile: infra/docker/Dockerfile.spark
-    container_name: spark-master
-    command: >
-      bash -c "/opt/spark/sbin/start-master.sh && tail -f /opt/spark/logs/spark--org.apache.spark.deploy.master*.out"
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
     environment:
-      - SPARK_MODE=master
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - AWS_ENDPOINT_URL=http://minio:9000
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms512m -Xmx512m
     ports:
-      - "9090:8080"
-      - "7077:7077"
+      - "9200:9200"
     volumes:
-      - ../../src/processing/jobs:/opt/spark/jobs
+      - elasticsearch-data:/usr/share/elasticsearch/data
+    restart: always
 
-  spark-worker:
-    build:
-      context: ../../
-      dockerfile: infra/docker/Dockerfile.spark
-    deploy:
-      replicas: 2
-    command: >
-      bash -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077 --cores 2 --memory 2g && tail -f /opt/spark/logs/spark--org.apache.spark.deploy.worker*.out"
-    environment:
-      - SPARK_MODE=worker
-      - SPARK_MASTER_URL=spark://spark-master:7077
-      - SPARK_WORKER_MEMORY=2G
-      - SPARK_WORKER_CORES=2
-      - SPARK_RPC_AUTHENTICATION_ENABLED=no
-      - SPARK_RPC_ENCRYPTION_ENABLED=no
-      - SPARK_LOCAL_STORAGE_ENCRYPTION_ENABLED=no
-      - SPARK_SSL_ENABLED=no
-      - AWS_ACCESS_KEY_ID=${MINIO_ROOT_USER:-minioadmin}
-      - AWS_SECRET_ACCESS_KEY=${MINIO_ROOT_PASSWORD:-minioadmin}
-      - AWS_ENDPOINT_URL=http://minio:9000
+  qdrant:
+    image: qdrant/qdrant:latest
     ports:
-      - "8081-8082:8081"
-    depends_on:
-      - spark-master
+      - "6333:6333"
+      - "6334:6334"
     volumes:
-      - ../../src/processing/jobs:/opt/spark/jobs
+      - qdrant-data:/qdrant/storage
+    restart: always
+
+  tika:
+    build:
+      context: .
+      dockerfile: Dockerfile.tika
+    container_name: docker-tika-1
+    ports:
+      - "9998:9998"
+    restart: always
 
   hive-metastore-db:
     image: postgres:15-alpine
+    container_name: hive-metastore-db
     environment:
       POSTGRES_USER: hive
       POSTGRES_PASSWORD: hivepassword
       POSTGRES_DB: metastore_db
+      POSTGRES_INITDB_ARGS: --auth-host=md5 --auth-local=md5
+      POSTGRES_HOST_AUTH_METHOD: md5
     volumes:
       - hive-metastore-data:/var/lib/postgresql/data
     restart: always
 
-  hive-metastore:
-    image: apache/hive:3.1.3
+  hive-metastore-init:
+    build:
+      context: .
+      dockerfile: Dockerfile.hive
+    container_name: hive-metastore-init
     environment:
       SERVICE_NAME: metastore
       DB_DRIVER: postgres
       SERVICE_OPTS: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-metastore-db:5432/metastore_db -Djavax.jdo.option.ConnectionUserName=hive -Djavax.jdo.option.ConnectionPassword=hivepassword"
-    ports:
-      - "9083:9083"
     depends_on:
       - hive-metastore-db
+    entrypoint: ["bash", "-c"]
+    command: >
+      "
+      export HADOOP_CLIENT_OPTS=\"-Xmx1G $$SERVICE_OPTS\";
+      echo 'Checking Hive Metastore schema...';
+      /opt/hive/bin/schematool -dbType postgres -info || (echo 'Initializing schema...' && /opt/hive/bin/schematool -dbType postgres -initSchema)
+      "
+
+  hive-metastore:
+    build:
+      context: .
+      dockerfile: Dockerfile.hive
+    container_name: hive-metastore
+    environment:
+      SERVICE_NAME: metastore
+      DB_DRIVER: postgres
+      IS_RESUME: "true"
+      SERVICE_OPTS: "-Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://hive-metastore-db:5432/metastore_db -Djavax.jdo.option.ConnectionUserName=hive -Djavax.jdo.option.ConnectionPassword=hivepassword"
+    ports:
+      - "9083:9083"
+    volumes:
+      - ./hive-core-site.xml:/opt/hadoop/etc/hadoop/core-site.xml
+    depends_on:
+      hive-metastore-db:
+        condition: service_started
+      hive-metastore-init:
+        condition: service_completed_successfully
+
+  spark-thrift-server:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile
+    container_name: spark-thrift-server
+    user: root
+    environment:
+      - SPARK_HOME=/opt/spark
+      - SPARK_DAEMON_MEMORY=512m
+      - SPARK_WORKER_MEMORY=512m
+      - AWS_ACCESS_KEY_ID=minioadmin
+      - AWS_SECRET_ACCESS_KEY=minioadmin
+      - AWS_ENDPOINT=http://minio:9000
+      - AWS_REGION=us-east-1
+    volumes:
+      - ../../src:/app
+      - ../../src/processing/config/hive-site.xml:/opt/spark/conf/hive-site.xml
+    entrypoint: ["bash", "-c"]
+    command: >
+      "echo 'Waiting for Hive Metastore...'; for i in $$(seq 1 30); do python -c \"import socket; s=socket.socket(); s.settimeout(2); s.connect(('hive-metastore',9083)); s.close()\" 2>/dev/null && break || echo 'Waiting...'; sleep 5; done; /opt/spark/bin/spark-submit --master local[1] --driver-memory 512m --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 --conf spark.hadoop.fs.s3a.access.key=minioadmin --conf spark.hadoop.fs.s3a.secret.key=minioadmin --conf spark.hadoop.fs.s3a.path.style.access=true --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem --conf spark.serializer=org.apache.spark.serializer.KryoSerializer --conf spark.sql.extensions=org.apache.spark.sql.hudi.HoodieSparkSessionExtension --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.hudi.catalog.HoodieCatalog /app/processing/jobs/sync_hudi_catalog.py && /opt/spark/bin/spark-submit --class org.apache.spark.sql.hive.thriftserver.HiveThriftServer2 --name 'Thrift Server' --master local[1] --driver-memory 512m --conf spark.hadoop.fs.s3a.endpoint=http://minio:9000 --conf spark.hadoop.fs.s3a.access.key=minioadmin --conf spark.hadoop.fs.s3a.secret.key=minioadmin --conf spark.hadoop.fs.s3a.path.style.access=true --conf spark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem --conf spark.serializer=org.apache.spark.serializer.KryoSerializer --conf spark.sql.extensions=org.apache.spark.sql.hudi.HoodieSparkSessionExtension --conf spark.sql.catalog.spark_catalog=org.apache.spark.sql.hudi.catalog.HoodieCatalog --hiveconf hive.server2.thrift.bind.host=0.0.0.0"
+    ports:
+      - "10000:10000"
+      - "4041:4040"
+    depends_on:
+      - hive-metastore
+      - minio
+    restart: unless-stopped
+
+  metabase:
+    image: metabase/metabase:v0.49.1
+    container_name: metabase
+    ports:
+      - "3000:3000"
+    volumes:
+      - metabase-data:/metabase.db
+    environment:
+      - JAVA_OPTS=-Xmx512m
+    restart: unless-stopped
+
+  search-api:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.api
+    container_name: search-api
+    ports:
+      - "8000:8000"
+    environment:
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-""}
+      - HF_HUB_OFFLINE=1
+    volumes:
+      - ../../src:/app/src
+    depends_on:
+      - elasticsearch
+      - qdrant
+
+  frontend:
+    build:
+      context: ../../
+      dockerfile: infra/docker/Dockerfile.frontend
+    container_name: streamlit-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ../../src:/app/src
+    depends_on:
+      - search-api
 
 volumes:
+  metabase-data:
   postgres-data:
   minio-data:
   hive-metastore-data:
+  elasticsearch-data:
+  qdrant-data:
