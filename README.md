@@ -1,212 +1,366 @@
 # 🎓 University Data Platform MVP
 
-Une plateforme de données moderne, scalable et orientée IA conçue spécifiquement pour le contexte universitaire (scraping, analytique, recherche full-text, et RAG). 
+> © 2026 University Data Platform — Plateforme de données moderne pour le contexte universitaire marocain.
 
-Cette infrastructure unifie l'ingestion de données hétérogènes, le stockage Lakehouse, le traitement Big Data distribué, l'indexation sémantique et la Business Intelligence dans une architecture centralisée, **hautement optimisée pour la stabilité (Zero-OOM) sur des environnements locaux et contraints**.
+Une plateforme de données **end-to-end** qui unifie l'ingestion web (scraping), le stockage Lakehouse (MinIO + Hudi), le traitement Big Data (Spark), l'indexation sémantique (Qdrant), la recherche full-text (Elasticsearch), la génération augmentée (RAG Gemini) et la Business Intelligence (Metabase) dans une architecture **Medallion** conteneurisée.
 
 ---
 
 ## 🏗️ Architecture Globale
 
-La plateforme est construite autour de l'architecture **Medallion Lakehouse**, couplée à des moteurs de recherche avancés.
+La plateforme suit l'architecture **Medallion Lakehouse** (Bronze → Silver → Gold) orchestrée par Apache Airflow.
 
-```mermaid
-graph TD
-    %% Sources
-    subgraph "1. Ingestion (Python/Playwright/API)"
-        A[Sites Universitaires] -->|Scraping| D
-        B[OpenAlex / ORCID] -->|APIs| D
-        C[PDFs & Documents] -->|Fichiers| D
-    end
+![Diagramme d'Architecture](docs/screenshots/Architecture.png)
 
-    %% Stockage Brut
-    subgraph "2. Raw Zone (Object Storage)"
-        D[(MinIO S3\nRaw Data)]
-    end
+### Flux de Données
 
-    %% Traitement
-    subgraph "3. Processing & AI (Apache Spark)"
-        D -->|Streaming S3A & Parsing Tika| E(Spark Silver)
-        E -->|Nettoyage HTML/PDF| F(Normalisation Hudi)
-        F -->|Chunking & Local Embedding\ne5-small| G(Spark Gold NLP)
-    end
-
-    %% Stockage Curé & Indexation
-    subgraph "4. Serving & Indexing Layer"
-        F --> H[(Apache Hudi\nCurated Zone)]
-        G -->|Text pur| I[(Elasticsearch\nFull-Text)]
-        G -->|Vecteurs 384d| J[(Qdrant\nSemantic Search)]
-    end
-
-    %% Orchestration & BI
-    subgraph "5. Orchestration & BI"
-        H --> K[Hive Metastore]
-        K --> L[Metabase BI]
-    end
-
-    O((Apache Airflow)) -.->|Orchestration| D
-    O -.->|Orchestration| E
-    O -.->|Orchestration| G
+```
+Sites Universitaires ──► Crawler (Playwright/Requests) ──► MinIO (Raw Zone)
+                                                                │
+OpenAlex API ──────────► Fetcher (Cursor Pagination) ──────────►│
+                                                                │
+                                                                ▼
+                                                    Spark Silver (Tika + Nettoyage)
+                                                                │
+                                                        ┌───────┴───────┐
+                                                        ▼               ▼
+                                                Apache Hudi      Elasticsearch
+                                              (Tables Silver)   (Index Full-Text)
+                                                        │
+                                                        ▼
+                                            Spark Gold (NLP + Embedding)
+                                                        │
+                                                ┌───────┴───────┐
+                                                ▼               ▼
+                                            Qdrant          Hive Metastore
+                                        (Vecteurs e5)      (Catalogue SQL)
+                                                                │
+                                                        ┌───────┴───────┐
+                                                        ▼               ▼
+                                                    Metabase      Spark Thrift
+                                                    (KPI/BI)      (JDBC/SQL)
 ```
 
 ---
 
-## 🌊 Flux de Données (Data Flows)
+## 🧰 Stack Technologique
 
-La plateforme repose sur un flux de données (pipeline) découpé en phases strictes, garantissant résilience, scalabilité et traçabilité.
-
-### Flux 1 : Ingestion (Collecte de la Donnée Brute)
-Les Crawlers (Python/Playwright) extraient les données des sites universitaires. Les données brutes (fichiers HTML, PDF, Word, JSON) sont poussées **directement en streaming** vers MinIO sans charger d'énormes objets en mémoire.
-```mermaid
-sequenceDiagram
-    participant Crawler as Airflow Ingestion Task
-    participant Web as Site Universitaire
-    participant MinIO as MinIO S3 (Zone Raw)
-    
-    Crawler->>Web: Requête HTTP / Scraping Playwright
-    Web-->>Crawler: Page HTML / Fichier PDF binaire
-    Crawler->>MinIO: Stream direct (put_object)
-    Note over Crawler,MinIO: Sauvegarde brute inaltérée
-```
-
-### Flux 2 : Zone Silver (Nettoyage & Extraction Anti-OOM)
-Afin d'éviter les crashs mémoire (OOM) sur les gros fichiers, ce flux utilise **Apache Spark en mode Streaming Binaire MinIO**. Spark ne charge plus l'intégralité des binaires en RAM, mais lit directement les flux S3 via la librairie boto3/S3A. Les fichiers riches (PDF) sont envoyés à Apache Tika.
-```mermaid
-sequenceDiagram
-    participant Spark as Spark Job (Silver)
-    participant MinIO as MinIO S3 (Zone Raw)
-    participant Tika as Serveur Apache Tika
-    participant Hudi as Apache Hudi (Zone Silver)
-    
-    Spark->>MinIO: Liste des chemins (s3a://raw-...)
-    Spark->>MinIO: Lecture des données en flux (Streaming)
-    Spark->>Tika: Envoi du payload binaire pour parsing
-    Tika-->>Spark: Texte brut extrait et métadonnées
-    Spark->>Hudi: Upsert (Dédoublonnage & Historisation)
-```
-
-### Flux 3 : Zone Gold (NLP, Vectorisation & Indexation)
-Les données textuelles curées sont transformées en vecteurs mathématiques (Embeddings) pour l'Intelligence Artificielle. Le modèle HuggingFace est pré-compilé dans l'image Docker pour éviter toute latence réseau, et la communication PyArrow est bridée pour garantir la stabilité.
-```mermaid
-sequenceDiagram
-    participant Spark as Spark Job (Gold)
-    participant Hudi as Apache Hudi (Zone Silver)
-    participant NLP as Modèle Local (E5-Small)
-    participant ES as Elasticsearch
-    participant Qdrant as Qdrant (Base Vectorielle)
-    
-    Spark->>Hudi: Lecture incrémentale / complète
-    Spark->>Spark: Découpage en Chunks (Langchain)
-    Spark->>NLP: Génération Embeddings via Pandas UDF
-    Note over Spark,NLP: IPC PyArrow limité à 2000 records par batch
-    Spark->>ES: Indexation du texte brut (Recherche Lexicale)
-    Spark->>Qdrant: Indexation Vectorielle à 384 dimensions (RAG)
-```
-
-### Flux 4 : Zone Catalogue (Synchronisation SQL)
-Afin d'exposer les données du Data Lakehouse aux analystes et à l'outil de Business Intelligence (Metabase), un processus de synchronisation agit comme pont entre MinIO et le dictionnaire Hive. L'architecture utilise des **tables globales unifiées** (ex: `course_catalog`), où les données de chaque faculté deviennent de simples **partitions physiques** (ex: `FSAC/`, `FSTM/`).
-```mermaid
-sequenceDiagram
-    participant Airflow as Airflow DAG
-    participant Spark as Script Sync
-    participant MinIO as MinIO (Zone Curated)
-    participant Hive as Hive Metastore
-    participant Metabase as Metabase BI
-    
-    Airflow->>Spark: Lancement à la fin de l'ingestion
-    Spark->>MinIO: Liste les tables Hudi existantes
-    Spark->>Hive: CREATE TABLE IF NOT EXISTS
-    Note over Spark,Hive: Déclaration de la table globale (Idempotent)
-    Metabase->>Hive: Lecture du catalogue SQL
-    Hive-->>Metabase: Tables disponibles (avec toutes les partitions)
-```
+| Composant | Technologie | Rôle |
+|---|---|---|
+| **Orchestration** | Apache Airflow (CeleryExecutor) | Planification et monitoring des pipelines |
+| **Object Storage** | MinIO (S3-compatible) | Data Lake — zone brute (Raw) |
+| **Processing** | Apache Spark 3.x (local mode) | Transformation Silver → Gold |
+| **Table Format** | Apache Hudi | Upserts, déduplication, time-travel |
+| **Catalogue** | Hive Metastore (PostgreSQL) | Exposition SQL des tables Hudi |
+| **BI** | Metabase | Dashboards & KPIs interactifs |
+| **Recherche Full-Text** | Elasticsearch 8.11 | Index inversé, highlighting, facettes |
+| **Recherche Sémantique** | Qdrant | Stockage vectoriel (embeddings e5-small) |
+| **NLP / Embedding** | `intfloat/multilingual-e5-small` | Vectorisation multilingue (FR/EN/AR) |
+| **RAG / LLM** | Google Gemini (via API) | Génération de réponses augmentées |
+| **API** | FastAPI | Endpoints REST (keyword, sémantique, RAG) |
+| **Frontend** | Streamlit | Interface utilisateur + Observabilité |
+| **Parsing** | Apache Tika (avec Tesseract OCR) | Extraction de texte (PDF, DOCX, HTML) |
+| **Alerting** | SMTP (Gmail) | Notifications email sur échec de pipeline |
 
 ---
 
-## 🛠️ Stack Technique & Optimisations Récentes
+## 📋 Prérequis
 
-* **Orchestration :** Apache Airflow (CeleryExecutor)
-* **Stockage Brut :** MinIO (S3-compatible)
-* **Processing :** Apache Spark 3.5.1 (PySpark)
-* **Format Lakehouse :** Apache Hudi
-* **Catalogue de Données :** Apache Hive Metastore (PostgreSQL)
-* **IA & NLP :** `sentence-transformers` (`intfloat/multilingual-e5-small`).
-* **Indexation Full-Text :** Elasticsearch 8.11
-* **Recherche Vectorielle (RAG) :** Qdrant
-
-### 🔧 Optimisations de Stabilité (Juin 2026)
-L'architecture a été profondément repensée pour fonctionner parfaitement sur des environnements Docker locaux sans erreurs de surcharge mémoire (`Exit Code -9` / `EOFException`) :
-1. **Zero-Latency ML :** Le modèle HuggingFace est désormais directement gravé dans l'image Docker (Build time), supprimant totalement les délais de téléchargement de 5 minutes au démarrage des tâches.
-2. **Mémoire JVM Restreinte :** Limitation volontaire à `driver-memory=1g` et exécution sur 1 seul cœur CPU (`local[1]`) pour la phase Gold, laissant de la RAM libre au travailleur Python (`Worker Python`).
-3. **Micro-Batches PyArrow :** La taille des lots de transfert de données entre le moteur Java de Spark et les fonctions Python Pandas UDF a été drastiquement réduite (`spark.sql.execution.arrow.maxRecordsPerBatch=2000`) pour lisser l'empreinte RAM.
-4. **Streaming S3 :** Abandon de la méthode `sparkContext.wholeTextFiles` au profit d'un pipeline de lecture MinIO boto3 asynchrone évitant le stockage des binaires dans le Driver Spark.
+- **Docker Desktop** ≥ 24.0 avec Docker Compose v2
+- **RAM allouée à Docker** : minimum **10 Go** (recommandé : 12 Go)
+- **Espace disque** : ~15 Go pour les images Docker
+- **(Optionnel)** Clé API Google Gemini pour le RAG : [https://aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
 
 ---
 
-## ⚙️ Composants du Projet
+## 🚀 Installation & Lancement
 
-La structure du code source est découpée selon les responsabilités métiers :
+### 1. Cloner le dépôt
 
-* `dags/` : Définition des workflows Apache Airflow (pipelines d'ingestion et de traitement).
-* `infra/docker/` : Fichiers d'infrastructure as code (Docker Compose, Dockerfile).
-* `src/ingestion/` : Scripts de collecte de données (Crawlers web structurés).
-* `src/processing/` : 
-  * `core/parsers/` : Extracteurs de texte brut (HTML BeautifulSoup, Tika PDF).
-  * `core/transformers/` : Traitements NLP distribués (Chunking, Vectorisation locale).
-  * `core/writers/` : Connecteurs de sortie massif (Hudi, Elasticsearch, Qdrant).
-  * `jobs/` : Les points d'entrée principaux exécutés par Spark-Submit.
+```bash
+git clone https://github.com/Oussama-Inchallah/University-Data-Platform-Mvp.git
+cd University-Data-Platform-Mvp
+```
 
----
+### 2. Configurer les variables d'environnement
 
-## 🚀 Installation & Démarrage
-
-### Prérequis
-* Docker et Docker Compose
-* Au minimum 16 Go de RAM alloués à la machine virtuelle Docker (WSL2 sous Windows).
-* Idéalement 4+ cœurs CPU alloués à Docker.
-
-### Étape 1 : Préparation de l'environnement
-Copiez le fichier `.env.example` en `.env` (si nécessaire) :
 ```bash
 cp infra/docker/.env.example infra/docker/.env
 ```
 
-### Étape 2 : Lancement des conteneurs
-Rendez-vous dans le dossier de l'infrastructure Docker et lancez la compilation complète (le modèle IA sera téléchargé pendant cette phase) :
+Éditez `infra/docker/.env` et renseignez :
+- `GEMINI_API_KEY` — votre clé API Google Gemini (optionnel, pour le RAG)
+- `SMTP_PASSWORD` — mot de passe d'application Gmail (optionnel, pour les alertes email)
+
+### 3. Lancer la plateforme
+
 ```bash
 cd infra/docker
-docker compose build --no-cache
-docker compose up -d
+docker compose up -d --build
 ```
 
-### Étape 3 : Accès aux Interfaces
-Une fois démarré, le projet met à disposition plusieurs tableaux de bord :
-* **Apache Airflow :** `http://localhost:8080` (Défaut : `airflow` / `airflow`)
-* **MinIO Console :** `http://localhost:9001` (Défaut : `minioadmin` / `minioadmin`)
-* **Qdrant Dashboard :** `http://localhost:6333/dashboard`
-* **Elasticsearch :** `http://localhost:9200`
-* **Metabase BI :** `http://localhost:3000`
+> ⏱️ Le premier build prend **15-20 minutes** (téléchargement des modèles NLP, Spark, Hudi).
+> Les lancements suivants prennent **~2 minutes**.
+
+### 4. Vérifier que tous les services sont opérationnels
+
+```bash
+docker compose ps
+```
+
+Tous les services doivent afficher `Up` ou `healthy`.
 
 ---
 
-## 👁️ Suivi Visuel et Opérations
+## 🧭 Accès aux Services
 
-La plateforme est conçue "UI-First". Tout est observable en temps réel :
-
-1. **Airflow (Port 8080) :**
-   Déclenchez vos DAGs (ex: `ingest_raw_fsac`) et observez la progression visuellement. Les logs de chaque tâche Spark sont récupérés en direct.
-2. **MinIO (Port 9001) :**
-   Visualisez la zone d'atterrissage (`raw-web-html`) ou inspectez l'architecture physique de vos tables Apache Hudi dans le bucket `curated-zone`.
-3. **Qdrant (Port 6333/dashboard) :**
-   Explorez visuellement les points en 384 dimensions de la collection `university_chunks` générés par le pipeline NLP.
-4. **Metabase (Port 3000) :**
-   Création de tableaux de bords analytiques via le point de terminaison Spark Thrift Server (Metastore).
+| Service | Rôle | URL | Identifiants |
+|---|---|---|---|
+| **Airflow** | Orchestration & Pipelines | [http://localhost:8080](http://localhost:8080) | `airflow` / `airflow` |
+| **MinIO** | Data Lake (Stockage brut) | [http://localhost:9001](http://localhost:9001) | `minioadmin` / `minioadmin` |
+| **Metabase** | BI & KPI Dashboards | [http://localhost:3000](http://localhost:3000) | *(configuré au 1er lancement)* |
+| **Elasticsearch** | Moteur de Recherche | [http://localhost:9200](http://localhost:9200) | *(pas d'authentification)* |
+| **Qdrant** | Base Vectorielle | [http://localhost:6333/dashboard](http://localhost:6333/dashboard) | *(pas d'authentification)* |
+| **FastAPI (Swagger)** | API REST | [http://localhost:8000/docs](http://localhost:8000/docs) | N/A |
+| **Streamlit** | Frontend & Observabilité | [http://localhost:8501](http://localhost:8501) | N/A |
+| **Spark UI** | Monitoring Spark | [http://localhost:4041](http://localhost:4041) | N/A |
 
 ---
 
-## 🛡️ Gouvernance et Sécurité des Données
+## ▶️ Exécution du Pipeline
 
-* **Lignage de Données (Data Lineage) :** Chaque document stocké dans Hudi conserve l'empreinte exacte (`content_hash`) et l'URL source pour garantir la traçabilité complète de l'information jusqu'à sa source web initiale.
-* **Isolation Storage/Compute :** L'architecture sépare strictement le calcul (Spark) du stockage (MinIO).
-* **Format Ouvert (Lakehouse) :** En s'appuyant sur Apache Hudi et Parquet, la plateforme évite le "Vendor Lock-in" et maintient vos archives pérennes.
-* **Design "Idempotent" :** Le pipeline peut crasher et être relancé 100 fois ; grâce au moteur d'UPSERT d'Hudi et à l'écrasement des Index ID dans Elasticsearch/Qdrant, vous n'aurez **jamais** de doublons dans la plateforme.
+### Lancer un pipeline complet (exemple : FSAC)
+
+1. Ouvrez **Airflow** : [http://localhost:8080](http://localhost:8080)
+2. Activez le DAG `ingest_raw_fsac` (toggle ON)
+3. Cliquez sur **Trigger DAG** (bouton ▶)
+4. Le pipeline exécute **4 tâches séquentielles** :
+
+| # | Task ID | Phase | Description |
+|---|---|---|---|
+| 1 | `scrape_and_ingest_to_minio` | **Bronze** | Crawl du site web → stockage brut dans MinIO |
+| 2 | `parse_and_normalize_to_hudi` | **Silver** | Parsing Tika + nettoyage → tables Apache Hudi |
+| 3 | `embed_and_index_to_search` | **Gold** | Chunking NLP + embedding → Qdrant & Elasticsearch |
+| 4 | `sync_hudi_to_hive_metastore` | **Analytics** | Synchronisation du catalogue Hive pour Metabase |
+
+### Pipeline OpenAlex (données de recherche)
+
+Le DAG `ingest_raw_openalex` interroge l'API OpenAlex pour récupérer les publications scientifiques associées à l'Université Hassan II.
+
+### Liste complète des DAGs
+
+| DAG ID | Université / Source |
+|---|---|
+| `ingest_raw_fsac` | Faculté des Sciences Ain Chock |
+| `ingest_raw_fstm` | Faculté des Sciences et Techniques Mohammedia |
+| `ingest_raw_fsj` | Faculté des Sciences Juridiques |
+| `ingest_raw_fsbm` | Faculté des Sciences Ben M'Sik |
+| `ingest_raw_fsk` | Faculté des Sciences Kénitra |
+| `ingest_raw_fpl` | Faculté Polydisciplinaire Larache |
+| `ingest_raw_fmpc` | Faculté de Médecine et Pharmacie |
+| `ingest_raw_estc` | École Supérieure de Technologie |
+| `ingest_raw_fsjesac` | FSJES Ain Chock |
+| `ingest_raw_fsjesuca` | FSJES Casablanca |
+| `ingest_raw_uh2c` | Université Hassan II (portail central) |
+| `ingest_raw_openalex` | OpenAlex (publications scientifiques) |
+
+---
+
+## 📁 Structure du Projet
+
+```
+University-Data-Platform-Mvp/
+│
+├── dags/                              # DAGs Airflow (orchestration)
+│   ├── dag_fsac.py                    # Pipeline Medallion pour FSAC
+│   ├── dag_fstm.py                    # Pipeline Medallion pour FSTM
+│   ├── dag_openalex.py                # Pipeline OpenAlex (API)
+│   ├── ... (12 DAGs au total)
+│   └── utils/
+│       └── alerts.py                  # Système d'alertes email (DataOps)
+│
+├── docs/                              # Documentation
+│   ├── RUNBOOK.md                     # Guide opérationnel
+│   ├── DEMO_SCRIPT.md                 # Script de démo (15 min)
+│   └── screenshots/                   # Preuves visuelles
+│       ├── Architecture.png           # Diagramme d'architecture
+│       ├── dashboards/                # Screenshots Metabase, Streamlit, RAG
+│       ├── ingestion/                 # Screenshots Airflow, MinIO
+│       └── processing/               # Screenshots Spark, Qdrant, ES
+│
+├── infra/docker/                      # Infrastructure
+│   ├── docker-compose.yml             # Définition des 14+ services
+│   ├── Dockerfile                     # Image Airflow + Spark + NLP
+│   ├── Dockerfile.api                 # Image FastAPI
+│   ├── Dockerfile.frontend            # Image Streamlit
+│   ├── Dockerfile.hive                # Image Hive Metastore
+│   ├── Dockerfile.tika                # Image Tika + OCR
+│   ├── .env.example                   # Variables d'environnement modèle
+│   └── requirements*.txt              # Dépendances Python
+│
+├── src/                               # Code source
+│   ├── api/
+│   │   └── search_rag_api.py          # API FastAPI (keyword, sémantique, RAG)
+│   ├── frontend/
+│   │   └── app.py                     # Interface Streamlit + Observabilité
+│   ├── ingestion/
+│   │   ├── crawler/
+│   │   │   ├── engine.py              # Crawler web (Playwright + requests)
+│   │   │   └── storage.py             # Gestionnaire MinIO (routage, ETags)
+│   │   └── openalex/
+│   │       └── fetcher.py             # Extracteur API OpenAlex
+│   └── processing/
+│       ├── config/
+│       │   └── universal_routing.yaml # Règles de routage métier (YAML)
+│       ├── core/
+│       │   ├── config_loader.py       # Chargeur de configuration
+│       │   ├── router.py              # Routeur de contenu
+│       │   ├── parsers/               # Parsers (HTML, Document, JSON, Image)
+│       │   ├── transformers/          # NLP, nettoyage, chunking
+│       │   ├── writers/               # Hudi, Elasticsearch, Qdrant
+│       │   └── utils/
+│       │       └── platform_logger.py # Logger centralisé (DataOps)
+│       └── jobs/
+│           ├── process_raw_to_hudi.py # Job Spark Silver
+│           ├── process_hudi_to_search.py # Job Spark Gold
+│           └── sync_hudi_catalog.py   # Sync Hive Metastore
+│
+└── tests/                             # Tests
+    ├── test_es_query.py               # Tests Elasticsearch
+    └── test_es_score.py               # Tests scoring ES
+```
+
+---
+
+## 🛡️ Fiabilité & Stabilité (30 points)
+
+La plateforme est conçue pour être **idempotente** et **tolérante aux pannes** :
+
+| Mécanisme | Description |
+|---|---|
+| **Retries automatiques** | Chaque DAG est configuré avec `retries=1` et `retry_delay=5min` |
+| **Catchup désactivé** | `catchup=False` empêche les exécutions en masse après un arrêt |
+| **ETags Crawler** | Le crawler vérifie les ETags sur MinIO avant de re-télécharger un fichier |
+| **Hudi Upserts** | Les tables Silver utilisent `UPSERT` avec clé primaire sur `url` → pas de doublons |
+| **Alertes Email** | Chaque échec de tâche envoie un email détaillé avec le traceback complet |
+| **Architecture Zero-OOM** | Streaming S3A (pas de `collect()`), traitement fichier-par-fichier pour éviter les dépassements mémoire |
+
+### Sécurité de réexécution
+
+Vous pouvez relancer le même DAG 10 fois : le résultat sera identique grâce aux Upserts Hudi et au mécanisme d'ETags du crawler.
+
+---
+
+## 📊 Qualité des Données & Traçabilité (20 points)
+
+| Aspect | Implémentation |
+|---|---|
+| **Schéma typé** | Tables Hudi avec colonnes : `doc_id`, `url`, `title`, `normalized_text`, `entity_type`, `language`, `source_system`, `ingestion_date` |
+| **Déduplication** | Clé primaire `url` avec Hudi UPSERT + Index BLOOM |
+| **Classification automatique** | Routeur YAML qui classe chaque document (cours, actualité, règlement, etc.) |
+| **Détection de langue** | Module NLP qui identifie automatiquement FR/EN/AR |
+| **Métadonnées complètes** | Chaque document porte : source, date d'ingestion, type, langue, système source |
+
+---
+
+## 📈 Utilité BI (15 points)
+
+Le dashboard **Metabase** est connecté via le **Spark Thrift Server** (JDBC) aux tables Hudi exposées dans le catalogue Hive.
+
+**KPIs disponibles :**
+- Volume de documents par faculté
+- Répartition par type de contenu (cours, actualités, règlements, publications)
+- Cartographie thématique de la recherche (Text Mining OpenAlex)
+- Taux de contenu non classifié (Jauge de qualité)
+
+**Screenshots :**
+
+| Dashboard | Description |
+|---|---|
+| ![Dashboard BI 1](docs/screenshots/dashboards/DashboardMetabaseBI.png) | Vue globale des KPIs |
+| ![Dashboard BI 2](docs/screenshots/dashboards/DashboardMetabaseBI1.png) | Détail par faculté |
+
+---
+
+## 🔍 Qualité de la Recherche (15 points)
+
+L'API expose **3 modes de recherche** :
+
+| Mode | Endpoint | Moteur | Description |
+|---|---|---|---|
+| **Keyword** | `GET /search/keyword` | Elasticsearch | Multi-champs pondérés, fuzzy, highlighting |
+| **Sémantique** | `GET /search/semantic` | Qdrant + ES + Gemini | Hybride RRF + RAG (Gemini) |
+| **Vectorielle pure** | `GET /search/qdrant_pure` | Qdrant | Similarité cosinus, filtres métadonnées |
+| **Avancée** | `POST /search/qdrant_advanced` | Qdrant | Filtres dynamiques (type, faculté, langue) |
+
+**Screenshots :**
+
+| Interface | Description |
+|---|---|
+| ![Assistant IA](docs/screenshots/dashboards/Assistant_IA_Q1%20.png) | Réponse RAG de l'assistant IA |
+| ![Swagger](docs/screenshots/processing/Swagger%20UI.png) | Documentation API Swagger |
+
+---
+
+## ⚙️ Qualité d'Ingénierie (10 points)
+
+- **Organisation modulaire** : séparation claire `ingestion/` → `processing/core/` → `processing/jobs/` → `api/` → `frontend/`
+- **Copyright © 2026** sur tous les fichiers
+- **Docstrings professionnelles en français** sur chaque module et fonction
+- **Configuration externalisée** : YAML pour le routage, `.env` pour les secrets
+- **Architecture extensible** : ajouter une nouvelle université = créer 1 fichier DAG
+
+---
+
+## 🛠️ Maturité Opérationnelle (10 points)
+
+- **Runbook complet** : voir [`docs/RUNBOOK.md`](docs/RUNBOOK.md)
+- **Script de démo** : voir [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
+- **Observabilité intégrée** : onglet DataOps dans Streamlit (logs scraper, ETL, erreurs, métriques)
+- **Déploiement one-command** : `docker compose up -d --build`
+- **Alertes email** automatiques en cas d'échec de pipeline
+
+---
+
+## 📸 Preuves de Tests
+
+### Ingestion (Airflow + MinIO)
+
+| Preuve | Description |
+|---|---|
+| ![Interface Airflow](docs/screenshots/ingestion/interfaceAirflow.png) | Vue de l'interface Airflow avec les 12 DAGs |
+| ![DAG FSAC](docs/screenshots/ingestion/dagFsac.png) | Exécution réussie du pipeline FSAC |
+| ![OpenAlex](docs/screenshots/ingestion/OpenAlex.png) | Ingestion des publications OpenAlex |
+
+### Processing (Spark + Qdrant + ES)
+
+| Preuve | Description |
+|---|---|
+| ![Task 2](docs/screenshots/processing/Task2DagFPL.png) | Job Spark Silver en exécution |
+| ![Task 3](docs/screenshots/processing/Task3DagFPL.png) | Job Spark Gold (NLP + Embedding) |
+| ![Qdrant Collections](docs/screenshots/processing/QdrantCollections.png) | Collections vectorielles dans Qdrant |
+| ![Qdrant Payload](docs/screenshots/processing/QdrantPayload.png) | Payload d'un chunk dans Qdrant |
+| ![ES Stats](docs/screenshots/processing/ES_Statistiques.png) | Statistiques de l'index Elasticsearch |
+
+### Dashboards & Recherche
+
+| Preuve | Description |
+|---|---|
+| ![Dashboard Metabase](docs/screenshots/dashboards/DashboardMetabaseBI.png) | Dashboard BI Metabase |
+| ![Observabilité](docs/screenshots/dashboards/Dash%20Observabilité%20de%20la%20plateforme.png) | Onglet Observabilité Streamlit |
+| ![Assistant IA Q2](docs/screenshots/dashboards/AssistantIA_Q2.png) | Réponse RAG - Question 2 |
+| ![Assistant IA Q3](docs/screenshots/dashboards/AssistantIA_Q3.png) | Réponse RAG - Question 3 |
+| ![Erreurs](docs/screenshots/dashboards/Erreurs%20d'ingestion.png) | Monitoring des erreurs d'ingestion |
+
+---
+
+## 📚 Documentation Complémentaire
+
+- 📖 [**Runbook Opérationnel**](docs/RUNBOOK.md) — Exécuter, surveiller, récupérer
+- 🎬 [**Script de Démo (15 min)**](docs/DEMO_SCRIPT.md) — Scénario de présentation minuté
+
+---
+
+## 👥 Équipe
+
+Projet réalisé dans le cadre du challenge **Best-of-9 MVP** — Université Hassan II de Casablanca.
