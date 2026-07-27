@@ -39,7 +39,6 @@ derby.log
 *.bak
 
 # Fichiers locaux persos
-docs/*.md
 extract_unclassified.py
 test_*.py
 z_docs/
