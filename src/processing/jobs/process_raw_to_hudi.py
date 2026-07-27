@@ -221,8 +221,11 @@ def main():
     # on préfixe l'URL dynamiquement. S'il n'y a pas de paramètre (ex: Scraping Web), on ne touche à rien.
     
     if args.api_name:
+        # Pour le traitement en lot de plusieurs universités via API,
+        # le source_system (ex: UH2C) est extrait directement du chemin MinIO (ex: openalex/UH2C/...).
+        # args.source_system contient la liste complète ("UH2C,FSTM") pour le logging, mais on assigne individuellement.
         df_enriched = df_routed \
-            .withColumn("source_system", F.lit(source_system)) \
+            .withColumn("source_system", F.regexp_extract(F.col("storage_path"), r"openalex/([^/]+)/", 1)) \
             .withColumn("source_url", F.concat(F.lit(f"[{args.api_name}] "), F.col("source_url"))) \
             .withColumn("crawl_timestamp", F.col("crawl_timestamp").cast("timestamp"))
     else:
@@ -249,7 +252,8 @@ def main():
     logger.info("Dropping duplicates based on content_hash...")
     df_enriched = df_enriched.dropDuplicates(["content_hash"])
     
-    checkpoint_path = f"s3a://curated-zone/_tmp_checkpoint_{source_system}"
+    safe_source_system = source_system.replace(",", "_")
+    checkpoint_path = f"s3a://curated-zone/_tmp_checkpoint_{safe_source_system}"
     logger.info(f"Writing checkpoint to {checkpoint_path}...")
     
     df_enriched.write.mode("overwrite").parquet(checkpoint_path)

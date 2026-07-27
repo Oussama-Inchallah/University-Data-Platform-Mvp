@@ -59,6 +59,9 @@ def main():
     
     spark = get_spark_session(f"UniversityData_Gold_{source_system}")
     
+    # Gestion du mode "batch" pour plusieurs universités (ex: "UH2C,FSTM")
+    source_systems = [s.strip() for s in source_system.split(",")]
+    
     # 1. Lecture de toutes les tables Hudi potentielles
     target_tables = list(set([e["target_table"] for e in loader.entities]))
     df_union = None
@@ -72,11 +75,11 @@ def main():
             # dont le business_timestamp (ou crawl_timestamp) correspond à l'execution_date
             if args.execution_date.lower() != "all":
                 df_filtered = df_table.filter(
-                    (F.col("source_system") == source_system) & 
+                    (F.col("source_system").isin(source_systems)) & 
                     (F.to_date(F.col("crawl_timestamp")) >= F.to_date(F.lit(args.execution_date)))
                 )
             else:
-                df_filtered = df_table.filter(F.col("source_system") == source_system)
+                df_filtered = df_table.filter(F.col("source_system").isin(source_systems))
                 
             if df_union is None:
                 df_union = df_filtered
