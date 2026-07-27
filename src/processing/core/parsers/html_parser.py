@@ -48,10 +48,22 @@ def extract_html_from_minio(bucket: str, path: str) -> Dict[str, str]:
             title = h1_tag.get_text(strip=True) if h1_tag else ""
         
         # Suppression des éléments non textuels ou parasites
-        for element in soup(["script", "style", "noscript", "nav", "footer", "header"]):
+        for element in soup(["script", "style", "noscript", "nav", "footer", "header", "iframe", "object", "embed", "svg", "form", "button"]):
             element.decompose()
             
         text = soup.get_text(separator=' ')
+        
+        # Nettoyage additionnel robuste (Regex) pour les sites WordPress mal formés
+        import re
+        # 1. Supprimer les balises HTML résiduelles (ex: <iframe>, <img ...>)
+        text = re.sub(r'<[^>]+>', ' ', text)
+        # 2. Supprimer le code JavaScript/CSS résiduel (lignes avec accolades ou .getAttribute)
+        text = re.sub(r'\{.*?\}', ' ', text)
+        text = re.sub(r'[A-Za-z0-9_]+\.getAttribute\([^)]+\)', ' ', text)
+        text = re.sub(r'function\s*\([^)]*\)\s*\{', ' ', text)
+        text = re.sub(r'Math\.random\(\).*?;', ' ', text)
+        # 3. Supprimer les URLs brutes d'images ou de fichiers (souvent générées par srcset)
+        text = re.sub(r'https?://[^\s]+\.(webp|png|jpg|jpeg|gif|css|js)', ' ', text)
         
         # Nettoyage des espaces multiples et sauts de ligne
         lines = (line.strip() for line in text.splitlines())
