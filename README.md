@@ -5,6 +5,60 @@
 
 Une plateforme de données **end-to-end** qui unifie l'ingestion web (scraping), le stockage Lakehouse (MinIO + Hudi), le traitement Big Data (Spark), l'indexation sémantique (Qdrant), la recherche full-text (Elasticsearch), la génération augmentée (RAG Gemini) et la Business Intelligence (Metabase) dans une architecture **Medallion** conteneurisée.
 
+
+La **University Data Platform** est un Data Lakehouse universitaire complet qui collecte, transforme, stocke et expose les données de toutes les facultés  
+L'objectif est de créer un système unique et intelligent permettant de :
+- Centraliser les informations dispersées sur les sites web des facultés.
+- Offrir un moteur de recherche par mots-clés (Elasticsearch).
+- Offrir une recherche sémantique (comprendre le sens des questions via Qdrant).
+- Proposer un assistant IA (RAG) qui génère des réponses en langage naturel.
+- Surveiller l'état de santé de tous les pipelines de données (Observabilité).
+
+Le projet suit l'architecture **Medallion** (ou Multi-Hop), un standard du Data Engineering moderne :
+
+```mermaid
+flowchart LR
+    subgraph SOURCES[SOURCES]
+        SW["Sites Web 11 Facs"]
+        OA["OpenAlex API"]
+    end
+    
+    subgraph BRONZE[BRONZE - Raw Zone]
+        MinIO[("MinIO S3\n5 buckets")]
+    end
+    
+    subgraph SILVER[SILVER - Curated]
+        Hudi[("Apache Hudi\n7 tables")]
+    end
+    
+    subgraph GOLD[GOLD - Search Zone]
+        ES[("Elasticsearch\nfull-text")]
+        Qdrant[("Qdrant\nvectoriel")]
+        Hive[("Hive Metastore\ncatalogue SQL")]
+    end
+    
+    subgraph SERVING[SERVING]
+        UI["Streamlit UI"]
+        API["FastAPI REST"]
+        LLM["Gemini LLM"]
+        BI["Metabase BI"]
+    end
+
+    SW --> MinIO
+    OA --> MinIO
+    
+    MinIO --> Hudi
+    
+    Hudi --> ES
+    Hudi --> Qdrant
+    Hudi --> Hive
+    
+    ES -.-> API
+    Qdrant -.-> API
+    LLM -.-> API
+    API --> UI
+    Hive -.-> BI
+```
 ---
 
 ## 🏗️ Architecture Globale
