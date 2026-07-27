@@ -18,6 +18,15 @@ x-airflow-common: &airflow-common
     AIRFLOW__LOGGING__REMOTE_LOGGING: 'true'
     AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: 's3://raw-logs/airflow-logs'
     AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID: 'minio_s3_log'
+    # Configuration SMTP pour Alertes Email
+    AIRFLOW__SMTP__SMTP_HOST: 'smtp.gmail.com'
+    AIRFLOW__SMTP__SMTP_STARTTLS: 'True'
+    AIRFLOW__SMTP__SMTP_SSL: 'False'
+    AIRFLOW__SMTP__SMTP_PORT: 587
+    AIRFLOW__SMTP__SMTP_USER: 'alfagroza003@gmail.com'
+    AIRFLOW__SMTP__SMTP_PASSWORD: '${SMTP_PASSWORD}'
+    AIRFLOW__SMTP__SMTP_MAIL_FROM: 'alfagroza003@gmail.com'
+    # -----------------------------------
     PYTHONPATH: /opt/airflow
     AIRFLOW_CONN_SPARK_DEFAULT: '{"conn_type": "spark", "host": "local[1]"}'
     AIRFLOW_CONN_SPARK_GOLD: '{"conn_type": "spark", "host": "local[1]"}'

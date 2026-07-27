@@ -38,55 +38,81 @@ def extract_json_from_minio(bucket: str, path: str) -> List[Dict[str, str]]:
         
         data = json.loads(content)
         
+        def reconstruct_openalex_abstract(inverted_index: dict) -> str:
+            if not inverted_index:
+                return ""
+            try:
+                max_pos = max([pos for positions in inverted_index.values() for pos in positions])
+                words = [""] * (max_pos + 1)
+                for word, positions in inverted_index.items():
+                    for pos in positions:
+                        words[pos] = word
+                return " ".join(words).strip()
+            except Exception:
+                return ""
+
         def extract_strings(obj):
+            # Fallback générique qui évite de prendre les URLs, les IDs techniques, etc.
             strings = []
             if isinstance(obj, dict):
-                for v in obj.values():
+                for k, v in obj.items():
+                    # Ignorer les clés bruyantes
+                    if str(k).lower() in ['id', 'url', 'doi', 'orcid', 'ror', 'issn', 'wikidata', 'uri']:
+                        continue
                     strings.extend(extract_strings(v))
             elif isinstance(obj, list):
                 for item in obj:
                     strings.extend(extract_strings(item))
             elif isinstance(obj, str):
                 s = obj.strip()
-                if not s:
+                # Ignorer les chaînes qui sont juste des URLs
+                if s.startswith('http://') or s.startswith('https://') or s.startswith('doi:'):
                     return strings
-                    
-                # Tentative de désérialisation si c'est un JSON stringifié (ex: "[{...}]")
-                if (s.startswith('{') and s.endswith('}')) or (s.startswith('[') and s.endswith(']')):
-                    try:
-                        inner_obj = json.loads(s)
-                        strings.extend(extract_strings(inner_obj))
-                        return strings
-                    except:
-                        pass
-                        
-                # Nettoyage des balises HTML si présentes (ex: "<h1 style=...>Texte</h1>")
-                if '<' in s and '>' in s:
-                    try:
-                        from bs4 import BeautifulSoup
-                        soup = BeautifulSoup(s, 'html.parser')
-                        s = soup.get_text(separator=' ', strip=True)
-                    except:
-                        pass
-                        
-                if s:
+                if len(s) > 2 and not s.isdigit():  # Ignorer les strings trop courtes ou purement numériques
                     strings.append(s)
             return strings
             
         def process_item(item_data, default_url=""):
-            all_texts = extract_strings(item_data)
-            text = " ".join(all_texts)
-            text = " ".join(text.split())
-            
-            if len(text) > 200000:
-                text = text[:200000]
-                
             title = ""
             url = default_url
+            text = ""
+            
             if isinstance(item_data, dict):
-                # Ajout de 'titre' (très courant dans les API francophones/marocaines)
                 title = item_data.get("title", item_data.get("titre", item_data.get("name", item_data.get("display_name", ""))))
                 url = item_data.get("id", item_data.get("url", default_url))
+                
+                # --- Traitement Spécifique : Schema OpenAlex ---
+                if "abstract_inverted_index" in item_data or (isinstance(url, str) and "openalex.org/W" in url):
+                    abstract = reconstruct_openalex_abstract(item_data.get("abstract_inverted_index"))
+                    
+                    authors = []
+                    authors_list = item_data.get("authorships") or []
+                    for authorship in authors_list:
+                        author_name = authorship.get("author", {}).get("display_name", "")
+                        if author_name: authors.append(author_name)
+                    
+                    concepts = []
+                    concepts_list = item_data.get("concepts") or []
+                    for concept in concepts_list:
+                        concept_name = concept.get("display_name", "")
+                        if concept_name: concepts.append(concept_name)
+                        
+                    parts = []
+                    if title: parts.append(f"Title: {title}")
+                    if authors: parts.append(f"Authors: {', '.join(authors)}")
+                    if concepts: parts.append(f"Keywords: {', '.join(concepts)}")
+                    if abstract: parts.append(f"Abstract: {abstract}")
+                    
+                    text = "\n".join(parts)
+                # --- Fin Traitement OpenAlex ---
+                else:
+                    # Fallback JSON générique (épuré)
+                    all_texts = extract_strings(item_data)
+                    text = " ".join(all_texts)
+                    
+            text = " ".join(text.split()) # Normalize whitespaces
+            if len(text) > 200000:
+                text = text[:200000]
                 
             return {"url": str(url), "title": str(title), "text": text}
 

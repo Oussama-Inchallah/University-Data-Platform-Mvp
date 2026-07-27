@@ -245,39 +245,29 @@ def search_semantic(q: str = Query(..., description="La question en langage natu
         search_result = qdrant_client.search(
             collection_name="university_chunks",
             query_vector=query_vector,
-            limit=15
+            limit=30
         )
         
-        results = []
-        seen_texts = set()
-        
-        for hit in search_result:
-            # --- Seuil intelligent (Option B) ---
-            # On ignore les chunks dont la pertinence sémantique est trop faible
-            if hit.score < 0.82:
+        qdrant_results = []
+        for rank, hit in enumerate(search_result, start=1):
+            if hit.score < 0.75:
                 continue
-                
             payload = hit.payload or {}
             text = payload.get("chunk_text", "").strip()
-            
-            # Élimination des doublons exacts
-            if text in seen_texts:
+            if not text:
                 continue
-            seen_texts.add(text)
-            
-            results.append({
-                "score": hit.score,
+            qdrant_results.append({
                 "text": text,
                 "url": payload.get("source_url", ""),
                 "faculty": payload.get("source_system", "Unknown"),
-                "source_table": payload.get("target_table", "")
+                "source_table": payload.get("target_table", ""),
+                "rank": rank
             })
-            
-            # Limite haute de sécurité pour les résultats Qdrant
-            if len(results) >= 7:
+            if len(qdrant_results) >= 15:
                 break
                 
         # --- RECHERCHE HYBRIDE (Mots-clés via Elasticsearch) ---
+        es_results = []
         try:
             import re
             quoted_terms = re.findall(r'"([^"]+)"', q)
@@ -286,12 +276,13 @@ def search_semantic(q: str = Query(..., description="La question en langage natu
                 {
                     "multi_match": {
                         "query": q,
-                        "fields": ["normalized_text^2", "raw_content"]
+                        "fields": ["normalized_text^2", "raw_content", "title^3"],
+                        "fuzziness": "AUTO",
+                        "type": "best_fields"
                     }
                 }
             ]
             
-            # Forcer la présence des mots entre guillemets
             for term in quoted_terms:
                 must_clauses.append({
                     "match_phrase": {
@@ -302,15 +293,25 @@ def search_semantic(q: str = Query(..., description="La question en langage natu
             es_body = {
                 "query": {
                     "bool": {
-                        "must": must_clauses
+                        "must": must_clauses,
+                        "should": [
+                            {
+                                "multi_match": {
+                                    "query": q,
+                                    "fields": ["title^10", "normalized_text^5"],
+                                    "type": "phrase",
+                                    "slop": 3
+                                }
+                            }
+                        ]
                     }
                 },
-                "size": 5,
+                "size": 30,
                 "highlight": {
                     "fields": {
                         "normalized_text": {
-                            "fragment_size": 300,
-                            "number_of_fragments": 10
+                            "fragment_size": 200,
+                            "number_of_fragments": 5
                         }
                     },
                     "pre_tags": [""],
@@ -319,33 +320,64 @@ def search_semantic(q: str = Query(..., description="La question en langage natu
             }
             es_response = es_client.search(index="university_content", body=es_body)
             es_hits = es_response.get("hits", {}).get("hits", [])
-            for hit in es_hits:
+            for rank, hit in enumerate(es_hits, start=1):
                 src = hit.get("_source", {})
                 
-                # Si on a des extraits pertinents (Highlighting), on les utilise pour ne pas envoyer tout le gros document
                 highlights = hit.get("highlight", {}).get("normalized_text", [])
                 if highlights:
                     text = " ... ".join(highlights)
                 else:
                     text = src.get("normalized_text", "").strip()[:2000]
                     
-                if not text or text in seen_texts:
+                if not text:
                     continue
-                seen_texts.add(text)
-                
-                results.append({
-                    "score": 1.0 + (hit.get("_score", 0) / 50.0), # Boost pour garantir le top classement
+                    
+                es_results.append({
                     "text": text,
                     "url": src.get("url", ""),
                     "faculty": src.get("source_system", "Unknown"),
-                    "source_table": "Elasticsearch"
+                    "source_table": "Elasticsearch",
+                    "rank": rank
                 })
         except Exception as e:
             logger.error(f"Erreur lors de la recherche hybride Elasticsearch : {e}")
             
-        # Trier par score (ES > 1.0 passera devant Qdrant qui est < 1.0)
-        # et limiter à 10 pour le LLM
-        results = sorted(results, key=lambda x: x['score'], reverse=True)[:10]
+        # --- FUSION RRF (Reciprocal Rank Fusion) ---
+        rrf_scores = {}
+        combined_docs = {}
+        
+        # Constante k réduite à 5 (au lieu de 60) car nous ne récupérons que 30 documents.
+        # Cela donne beaucoup plus de poids à un document classé 1er sur un seul moteur 
+        # plutôt qu'à un document classé 20ème sur les deux moteurs.
+        k = 5 
+        
+        for doc in qdrant_results:
+            text = doc["text"]
+            score = 1.0 / (doc["rank"] + k)
+            rrf_scores[text] = rrf_scores.get(text, 0.0) + score
+            combined_docs[text] = doc
+            
+        for doc in es_results:
+            text = doc["text"]
+            score = 1.0 / (doc["rank"] + k)
+            rrf_scores[text] = rrf_scores.get(text, 0.0) + score
+            if text not in combined_docs:
+                combined_docs[text] = doc
+                
+        # Reconstruction de la liste finale, triée par le vrai score RRF
+        results = []
+        for text, rrf_score in sorted(rrf_scores.items(), key=lambda item: item[1], reverse=True):
+            doc = combined_docs[text]
+            results.append({
+                "score": round(rrf_score, 5), 
+                "text": text,
+                "url": doc["url"],
+                "faculty": doc["faculty"],
+                "source_table": doc["source_table"]
+            })
+            
+        # Limiter à 10 pour le contexte du LLM
+        results = results[:10]
                 
         # --- GENERATION RAG ---
         llm_answer = None

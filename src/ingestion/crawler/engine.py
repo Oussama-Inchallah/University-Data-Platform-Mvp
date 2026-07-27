@@ -556,6 +556,8 @@ class GenericCrawler:
             is_internal = self._is_allowed(url)
             res = self.fetcher.fetch(url, is_allowed_domain=is_internal, on_resource=on_intercepted_resource, storage_router=self.storage_router)
             if res[0] is None:
+                if depth == 0:
+                    return [], True, url, {"status": "error", "error": "Seed URL unreachable"}
                 return [], False, url, "ignored"
             
             content, content_type, final_url, etag, last_modified = res
@@ -635,6 +637,7 @@ class GenericCrawler:
         
         # lock for stats update
         stats_lock = threading.Lock()
+        fatal_error = None
         
         with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
             futures = {}
@@ -700,6 +703,7 @@ class GenericCrawler:
                             
                             if is_seed_error and depth == 0:
                                 self.logger.critical("Seed URL failed. Aborting crawler.")
+                                fatal_error = f"Seed URL {processed_url} is unreachable."
                                 queue.clear()
                                 futures.clear()
                                 break
@@ -783,12 +787,20 @@ class GenericCrawler:
         
         # --- Platform Observability Logging ---
         job_name = f"scraper_{self.university_id.lower()}"
-        status = "SUCCESS" if stats["errors"] == 0 else "FAILED"
-        error_msg = f"{stats['errors']} errors encountered" if stats["errors"] > 0 else None
+        
+        if fatal_error:
+            status = "FAILED"
+            error_msg = fatal_error
+        else:
+            status = "SUCCESS" if stats["errors"] == 0 else "FAILED"
+            error_msg = f"{stats['errors']} errors encountered" if stats["errors"] > 0 else None
         
         try:
             pl = PlatformLogger()
             pl.log_job_status(job_name, status, error_msg)
         except Exception as e:
             self.logger.warning(f"Could not push to PlatformLogger: {e}")
+
+        if fatal_error:
+            raise ConnectionError(fatal_error)
 
