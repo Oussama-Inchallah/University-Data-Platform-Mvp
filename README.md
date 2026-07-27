@@ -42,10 +42,25 @@ La phase Gold lit les données propres depuis les tables Hudi (Silver), applique
 **Déclencheur** : Task 3 du DAG Airflow (`embed_and_index_to_search`)
 **Moteur** : Apache Spark (SparkSubmitOperator, mode local)
 
+## 04 - Orchestration Airflow (DAGs et Tasks)
 
+## Vue d'ensemble
+**Apache Airflow** est l'orchestrateur central de la plateforme. Il planifie, exécute et surveille chaque pipeline de données via des **DAGs** (Directed Acyclic Graphs).
+
+Chaque DAG représente un pipeline complet pour une source de données (une faculté ou l'API OpenAlex).
+
+## 05 - API de Recherche et Pipeline RAG
+
+## Vue d'ensemble
+L'API REST est le **backend** de la plateforme. Elle expose les moteurs de recherche (Elasticsearch et Qdrant) et le pipeline RAG (Retrieval-Augmented Generation) via des endpoints HTTP.
 
 ## 🏗️ Architecture Globale
 
+
+## 06 - Interface Utilisateur (Streamlit)
+
+## Vue d'ensemble
+L'interface utilisateur est une application web **Streamlit** qui permet aux étudiants, enseignants et administrateurs d'interagir avec la plateforme sans aucune compétence technique.
 La plateforme suit l'architecture **Medallion Lakehouse** (Bronze → Silver → Gold) orchestrée par Apache Airflow.
 
 ![Diagramme d'Architecture](docs/screenshots/Architecture.png)
