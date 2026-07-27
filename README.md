@@ -182,7 +182,6 @@ University-Data-Platform-Mvp/
 │
 ├── docs/                              # Documentation
 │   ├── RUNBOOK.md                     # Guide opérationnel
-│   ├── DEMO_SCRIPT.md                 # Script de démo (15 min)
 │   └── screenshots/                   # Preuves visuelles
 │       ├── Architecture.png           # Diagramme d'architecture
 │       ├── dashboards/                # Screenshots Metabase, Streamlit, RAG
@@ -233,7 +232,7 @@ University-Data-Platform-Mvp/
 
 ---
 
-## 🛡️ Fiabilité & Stabilité (30 points)
+## 🛡️ Fiabilité & Stabilité
 
 La plateforme est conçue pour être **idempotente** et **tolérante aux pannes** :
 
@@ -252,7 +251,7 @@ Vous pouvez relancer le même DAG 10 fois : le résultat sera identique grâce a
 
 ---
 
-## 📊 Qualité des Données & Traçabilité (20 points)
+## 📊 Qualité des Données & Traçabilité
 
 | Aspect | Implémentation |
 |---|---|
@@ -264,7 +263,7 @@ Vous pouvez relancer le même DAG 10 fois : le résultat sera identique grâce a
 
 ---
 
-## 📈 Utilité BI (15 points)
+## 📈 Utilité BI
 
 Le dashboard **Metabase** est connecté via le **Spark Thrift Server** (JDBC) aux tables Hudi exposées dans le catalogue Hive.
 
@@ -283,7 +282,7 @@ Le dashboard **Metabase** est connecté via le **Spark Thrift Server** (JDBC) au
 
 ---
 
-## 🔍 Qualité de la Recherche (15 points)
+## 🔍 Qualité de la Recherche
 
 L'API expose **3 modes de recherche** :
 
@@ -303,7 +302,7 @@ L'API expose **3 modes de recherche** :
 
 ---
 
-## ⚙️ Qualité d'Ingénierie (10 points)
+## ⚙️ Qualité d'Ingénierie
 
 - **Organisation modulaire** : séparation claire `ingestion/` → `processing/core/` → `processing/jobs/` → `api/` → `frontend/`
 - **Copyright © 2026** sur tous les fichiers
@@ -313,10 +312,9 @@ L'API expose **3 modes de recherche** :
 
 ---
 
-## 🛠️ Maturité Opérationnelle (10 points)
+## 🛠️ Maturité Opérationnelle
 
 - **Runbook complet** : voir [`docs/RUNBOOK.md`](docs/RUNBOOK.md)
-- **Script de démo** : voir [`docs/DEMO_SCRIPT.md`](docs/DEMO_SCRIPT.md)
 - **Observabilité intégrée** : onglet DataOps dans Streamlit (logs scraper, ETL, erreurs, métriques)
 - **Déploiement one-command** : `docker compose up -d --build`
 - **Alertes email** automatiques en cas d'échec de pipeline
@@ -358,7 +356,6 @@ L'API expose **3 modes de recherche** :
 ## 📚 Documentation Complémentaire
 
 - 📖 [**Runbook Opérationnel**](docs/RUNBOOK.md) — Exécuter, surveiller, récupérer
-- 🎬 [**Script de Démo (15 min)**](docs/DEMO_SCRIPT.md) — Scénario de présentation minuté
 
 ---
 
