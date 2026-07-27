@@ -80,7 +80,7 @@ with tab1:
                     if results:
                         st.success(f"Voici les {len(results)} sources utilisées par l'IA pour générer cette réponse :")
                         for i, res in enumerate(results):
-                            with st.expander(f"📚 Source {i+1} (Pertinence: {res.get('score', 0):.2f}) - {res.get('faculty', 'Inconnu')}"):
+                            with st.expander(f"📚 Source {i+1} (Score RRF: {res.get('score', 0):.2f}) - {res.get('faculty', 'Inconnu')}"):
                                 st.markdown(f"**Texte extrait :**\n\n> {res.get('text', '')}")
                                 if res.get('url'):
                                     st.markdown(f"**Lien original :** [{res.get('url')}]({res.get('url')})")
@@ -171,7 +171,7 @@ with tab3:
     with col_c:
         language_filter = st.selectbox("Langue :", lang_options, index=lang_options.index(current_lang), key="qdrant_language")
     
-    if st.button("Chercher (Hybride Avancé)", key="btn_qdrant"):
+    if st.button("Chercher", key="btn_qdrant"):
         if query_qdrant:
             with st.spinner("Recherche vectorielle et filtrage dans Qdrant..."):
                 try:
@@ -292,25 +292,82 @@ with tab4:
                 else: display_logs(hits)
                 
     with sub4:
-        st.subheader("Tableaux de bord de surveillance")
-        st.markdown("La surveillance complète de la plateforme (Business Intelligence & DataOps) est disponible sur Metabase.")
-        st.info("💡 **Accéder à Metabase :** [http://localhost:3000](http://localhost:3000)")
+        st.subheader("📊 Santé des Pipelines (DataOps)")
+        st.markdown("Vue consolidée de la fiabilité de chaque pipeline d'ingestion.")
         
-        if st.button("Calculer les statistiques rapides", key="btn_stats"):
+        if st.button("Charger le Dashboard DataOps", key="btn_stats", type="primary"):
             try:
-                res = requests.post(f"{ES_URL}/platform_logs/_search", json={
+                # --- Ligne 0 : Grands chiffres ---
+                res_global = requests.post(f"{ES_URL}/platform_logs/_search", json={
                     "size": 0,
                     "aggs": {"statuses": {"terms": {"field": "status"}}}
                 })
-                if res.status_code == 200:
-                    aggs = res.json().get("aggregations", {}).get("statuses", {}).get("buckets", [])
+                if res_global.status_code == 200:
+                    aggs = res_global.json().get("aggregations", {}).get("statuses", {}).get("buckets", [])
                     total = sum(b["doc_count"] for b in aggs)
                     success = next((b["doc_count"] for b in aggs if b["key"] == "SUCCESS"), 0)
                     failed = next((b["doc_count"] for b in aggs if b["key"] == "FAILED"), 0)
+                    taux = round(success * 100.0 / total, 1) if total > 0 else 0
                     
-                    c1, c2, c3 = st.columns(3)
-                    c1.metric("Total des exécutions", total)
-                    c2.metric("Réussites (SUCCESS)", success)
-                    c3.metric("Échecs (FAILED)", failed)
+                    c1, c2, c3, c4 = st.columns(4)
+                    c1.metric("Total Exécutions", total)
+                    c2.metric("✅ Succès", success)
+                    c3.metric("❌ Échecs", failed)
+                    c4.metric("Taux de Fiabilité", f"{taux}%")
+                    
+                    if taux >= 90:
+                        st.success(f"🟢 Plateforme en bonne santé — Taux de fiabilité de {taux}%")
+                    elif taux >= 70:
+                        st.warning(f"🟡 Attention — Taux de fiabilité de {taux}%")
+                    else:
+                        st.error(f"🔴 Critique — Taux de fiabilité de {taux}%")
+                
+                st.divider()
+                
+                # --- Tableau détaillé par Pipeline ---
+                st.markdown("#### Détail par Pipeline")
+                res_pipelines = requests.post(f"{ES_URL}/platform_logs/_search", json={
+                    "size": 0,
+                    "aggs": {
+                        "pipelines": {
+                            "terms": {"field": "job_name", "size": 50},
+                            "aggs": {
+                                "statuses": {"terms": {"field": "status"}},
+                                "last_run": {"max": {"field": "timestamp"}}
+                            }
+                        }
+                    }
+                })
+                
+                if res_pipelines.status_code == 200:
+                    pipelines = res_pipelines.json().get("aggregations", {}).get("pipelines", {}).get("buckets", [])
+                    
+                    if pipelines:
+                        import pandas as pd
+                        rows = []
+                        for p in pipelines:
+                            name = p["key"]
+                            p_total = p["doc_count"]
+                            p_success = next((s["doc_count"] for s in p["statuses"]["buckets"] if s["key"] == "SUCCESS"), 0)
+                            p_failed = next((s["doc_count"] for s in p["statuses"]["buckets"] if s["key"] == "FAILED"), 0)
+                            p_taux = round(p_success * 100.0 / p_total, 1) if p_total > 0 else 0
+                            last_run = p.get("last_run", {}).get("value_as_string", "N/A")
+                            
+                            status_emoji = "✅" if p_failed == 0 else "⚠️" if p_taux >= 80 else "❌"
+                            rows.append({
+                                "Statut": status_emoji,
+                                "Pipeline": name,
+                                "Succès": p_success,
+                                "Échecs": p_failed,
+                                "Total": p_total,
+                                "Fiabilité (%)": p_taux,
+                                "Dernière exécution": last_run
+                            })
+                        
+                        df = pd.DataFrame(rows).sort_values("Fiabilité (%)", ascending=True)
+                        st.dataframe(df, use_container_width=True, hide_index=True)
+                    else:
+                        st.info("Aucun pipeline trouvé dans les logs.")
+                        
             except Exception as e:
-                st.error("Erreur de récupération des métriques.")
+                st.error(f"Erreur de récupération des métriques : {e}")
