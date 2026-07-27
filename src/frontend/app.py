@@ -14,6 +14,7 @@ import streamlit as st
 import requests
 import json
 import os
+import re
 from datetime import datetime
 
 # URL de l'API (nom du service docker)
@@ -93,9 +94,15 @@ with tab1:
                         st.success(f"Voici les {len(results)} sources utilisées par l'IA pour générer cette réponse :")
                         for i, res in enumerate(results):
                             with st.expander(f"📚 Source {i+1} (Score RRF: {res.get('score', 0):.2f}) - {res.get('faculty', 'Inconnu')}"):
-                                st.markdown(f"**Texte extrait :**\n\n> {res.get('text', '')}")
+                                clean_text = re.sub(r'<[^>]+>', ' ', res.get('text', ''))
+                                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                                st.markdown(f"**Texte extrait :**\n\n> {clean_text}")
                                 if res.get('url'):
-                                    st.markdown(f"**Lien original :** [{res.get('url')}]({res.get('url')})")
+                                    url = res.get('url')
+                                    if url.startswith('http'):
+                                        st.markdown(f"**Lien original :** [{url}]({url})")
+                                    else:
+                                        st.markdown(f"**Référence source :** {url}")
                     else:
                         st.warning("Aucune information pertinente trouvée.")
                 except Exception as e:
@@ -217,7 +224,9 @@ with tab3:
                             expander_title = " - ".join(title_parts)
                             
                             with st.expander(expander_title):
-                                st.markdown(f"**Texte :**\n\n> {res.get('text', '')}")
+                                clean_text = re.sub(r'<[^>]+>', ' ', res.get('text', ''))
+                                clean_text = re.sub(r'\s+', ' ', clean_text).strip()
+                                st.markdown(f"**Texte :**\n\n> {clean_text}")
                                 
                                 meta_info = f"Faculté : **{res.get('faculty', 'Inconnu')}**"
                                 if res.get('language'):
@@ -226,7 +235,11 @@ with tab3:
                                 st.caption(meta_info)
                                 
                                 if res.get('url'):
-                                    st.markdown(f"[Voir la source]({res.get('url')})")
+                                    url = res.get('url')
+                                    if url.startswith('http'):
+                                        st.markdown(f"[Voir la source]({url})")
+                                    else:
+                                        st.caption(f"Référence interne : {url}")
                     else:
                         st.warning("Aucun document sémantiquement proche n'a été trouvé avec ces filtres.")
                 except Exception as e:
