@@ -1,3 +1,8 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
 """
 Moteur de Crawling (Ingestion Web)
 ----------------------------------

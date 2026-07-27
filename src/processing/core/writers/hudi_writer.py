@@ -1,26 +1,43 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
 """
-Connecteur Apache Hudi (Datalake)
----------------------------------
-Ce module permet d'écrire le DataFrame Spark dans la zone 'curated' de MinIO.
-Il gère les opérations d'Upsert (insertion/mise à jour) au format Hudi
-pour garantir l'intégrité des données (ACID).
+Connecteur Apache Hudi (Lakehouse / Zone Silver & Gold)
+-------------------------------------------------------
+Module gérant l'écriture transactionnelle (ACID) des DataFrames Spark sur MinIO.
+Assure l'intégrité des données via des opérations UPSERT (Insert/Update) basées
+sur les clés primaires métier (record_id).
 """
+
 from pyspark.sql import DataFrame
 
 class HudiWriter:
     """
-    Gestionnaire d'écriture vers le Data Lakehouse Apache Hudi (Curated Zone).
+    Gestionnaire d'écriture Data Lakehouse (Apache Hudi).
+    
+    Architecture (DataOps) :
+    - Mode 'UPSERT' natif : Met à jour les documents modifiés sans dupliquer l'historique brut.
+    - Partitionnement par 'source_system' pour accélérer les requêtes analytiques (Pruning).
+    - Optimisé avec l'index 'BLOOM' pour la recherche rapide des clés lors de l'Upsert.
     """
     def __init__(self, base_path: str = "s3a://curated-zone"):
         """
-        :param base_path: Le bucket MinIO de destination.
+        Initialise le writer Hudi.
+        
+        Args:
+            base_path (str): URI S3A du bucket de destination (Lakehouse).
         """
         self.base_path = base_path
 
     def upsert(self, df: DataFrame, table_name: str):
         """
-        Effectue une opération UPSERT (Insert/Update) dans la table Hudi spécifiée.
-        Utilise les colonnes communes exigées dans le schéma cible.
+        Exécute une opération UPSERT sur la table Hudi cible.
+        
+        Args:
+            df (DataFrame): Le DataFrame Spark transformé à persister.
+            table_name (str): Nom de la table Hudi (ex: faculty_profiles).
         """
         table_path = f"{self.base_path}/{table_name}"
         
@@ -30,20 +47,15 @@ class HudiWriter:
             'hoodie.datasource.write.partitionpath.field': 'source_system',
             'hoodie.datasource.write.precombine.field': 'crawl_timestamp',
             'hoodie.datasource.write.operation': 'upsert',
-            # Optimisations pour accélérer l'écriture (Débridage)
+            # Optimisations I/O (DataOps)
             'hoodie.upsert.shuffle.parallelism': 8, 
             'hoodie.insert.shuffle.parallelism': 8,
-            # Indexation de base
+            # Indexation rapide
             'hoodie.index.type': 'BLOOM',
-            # Schema Evolution
+            # Évolution automatique du schéma
             'hoodie.datasource.write.reconcile.schema': 'true',
-            # Configuration Hive Metastore (Optionnel, à ajuster si Hive est sécurisé)
-            # 'hoodie.datasource.hive_sync.enable': 'true',
-            # 'hoodie.datasource.hive_sync.database': 'default',
-            # 'hoodie.datasource.hive_sync.table': table_name,
         }
         
-        # Le mode 'append' avec l'opération 'upsert' de Hudi met à jour les existants ou ajoute les nouveaux
         df.write.format("hudi"). \
             options(**hudi_options). \
             mode("append"). \

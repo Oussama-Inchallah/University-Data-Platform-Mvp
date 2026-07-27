@@ -1,10 +1,16 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
 """
-Routeur Dynamique Spark
------------------------
-Ce module applique les règles issues du rules.yaml au DataFrame Spark.
-Il crée une nouvelle colonne 'target_table' indiquant dans quelle table
-Hudi chaque document doit être sauvegardé (ex: faculty_profiles, events).
+Routeur Sémantique Dynamique (Spark / DataOps)
+----------------------------------------------
+Moteur de classification de la plateforme. Il applique de manière distribuée (Spark)
+les expressions régulières (Regex) issues de la configuration métier (YAML) sur
+les URLs et les Titres pour déterminer la table Hudi de destination finale.
 """
+
 import urllib.parse
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, when, lit, udf
@@ -13,23 +19,34 @@ from typing import List, Dict, Any
 
 class DynamicRouter:
     """
-    Module responsable du routage des données brutes vers les tables Hudi cibles.
+    Routeur de données basé sur des règles.
+    Permet la ventilation des documents bruts (Data Lake) vers les tables analytiques (Lakehouse).
     """
     
     @staticmethod
     def route_dataframe(df: DataFrame, entities_config: List[Dict[str, Any]]) -> DataFrame:
         """
-        Ajoute une colonne 'target_table' au DataFrame en fonction des règles regex (url_pattern) du YAML.
-        L'approche décode l'URL brute et évalue le pattern sur l'URL décodée ET sur le titre.
+        Applique la logique de routage métier sur un DataFrame Spark distribué.
+        
+        Fonctionnement :
+        1. Décodage de l'URL (urllib.unquote) pour la gestion correcte des accents/caractères spéciaux.
+        2. Construction dynamique d'une expression Spark SQL 'CASE WHEN' basée sur les regex.
+        3. Assignation de la table cible ou fallback sur le registre documentaire par défaut.
+        
+        Args:
+            df (DataFrame): Le DataFrame Spark contenant les données brutes.
+            entities_config (List[Dict[str, Any]]): Règles métier issues du ConfigLoader.
+            
+        Returns:
+            DataFrame: Le DataFrame original enrichi de la colonne analytique 'target_table'.
         """
         if not entities_config:
-            # Fallback de sécurité si le YAML est vide
+            # Fallback de sécurité : routage global vers le registre par défaut
             return df.withColumn("target_table", lit("documents_registry"))
             
-        # UDF pour décoder l'URL (URL Unquote)
+        # Enregistrement de l'UDF pour le décodage des URLs HTTP (ex: %20 -> espace)
         decode_url_udf = udf(lambda url: urllib.parse.unquote(url) if url else "", StringType())
         
-        # Ajouter une colonne temporaire avec l'URL décodée
         df_routed = df.withColumn("decoded_url", decode_url_udf(col("source_url")))
         
         route_expr = None
@@ -41,8 +58,7 @@ class DynamicRouter:
             if not target or not pattern:
                 continue
                 
-            # On cherche le pattern dans l'URL décodée OU dans le titre
-            # RLIKE effectue une recherche regex. (?i) dans le YAML gère l'insensibilité à la casse.
+            # Évaluation du pattern (insensible à la casse) sur l'URL décodée OU le titre du document
             condition = col("decoded_url").rlike(pattern) | col("title").rlike(pattern)
             
             if route_expr is None:
@@ -53,10 +69,10 @@ class DynamicRouter:
         if route_expr is None:
             route_expr = lit("documents_registry")
         else:
-            # Tout ce qui ne matche pas va dans le registre documentaire par défaut
+            # Classement par défaut pour les contenus non catégorisés
             route_expr = route_expr.otherwise(lit("documents_registry"))
             
-        # Appliquer l'expression et supprimer la colonne temporaire 'decoded_url'
+        # Application de l'arbre conditionnel et nettoyage de la colonne temporaire
         df_routed = df_routed.withColumn("target_table", route_expr).drop("decoded_url")
         
         return df_routed

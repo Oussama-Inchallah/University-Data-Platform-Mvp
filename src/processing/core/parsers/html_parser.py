@@ -1,9 +1,16 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
 """
-Parseur HTML (Web) - Metadata Driven
-------------------------------------
-Ce module utilise BeautifulSoup via une UDF Spark pour extraire le texte propre
-et le titre d'une page HTML téléchargée à la volée depuis MinIO.
+Parseur HTML Sécurisé (Zone Bronze -> Silver)
+---------------------------------------------
+Module en charge de l'ingestion distribuée des pages web brutes.
+Utilise BeautifulSoup dans un contexte PySpark (UDF) pour nettoyer les scories HTML,
+JavaScript et CSS, et extraire le contenu textuel qualifié pour le NLP.
 """
+
 from bs4 import BeautifulSoup
 from pyspark.sql.functions import udf
 from pyspark.sql.types import StructType, StructField, StringType
@@ -11,20 +18,31 @@ from typing import Dict
 import os
 import urllib3
 import logging
+import re
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
 logger = logging.getLogger(__name__)
 
 def extract_html_from_minio(bucket: str, path: str) -> Dict[str, str]:
     """
-    Télécharge une page HTML depuis MinIO et extrait son texte utile et son titre.
+    Télécharge et parse dynamiquement une page HTML stockée sur MinIO (S3).
+    
+    Architecture (DataOps) :
+    - Exécuté directement par les workers Spark (Lazy initialization du client S3).
+    - Inclut une heuristique de nettoyage agressif (Regex) pour éviter
+      la pollution sémantique (résidus de JS/CSS, iframes).
+      
+    Args:
+        bucket (str): Nom du bucket S3/MinIO.
+        path (str): Chemin absolu de l'objet dans le bucket.
+        
+    Returns:
+        Dict[str, str]: Dictionnaire contenant 'title' et 'text' normalisés.
     """
     if not bucket or not path:
         return {"title": "", "text": ""}
         
     try:
-        # Initialisation lazy du client (une fois par worker PySpark)
         global minio_client
         if 'minio_client' not in globals():
             from minio import Minio
@@ -40,46 +58,36 @@ def extract_html_from_minio(bucket: str, path: str) -> Dict[str, str]:
         
         soup = BeautifulSoup(html_content, 'html.parser')
         
-        # Extraction du titre
         title_tag = soup.find('title')
         title = title_tag.get_text(strip=True) if title_tag else ""
         if not title:
             h1_tag = soup.find('h1')
             title = h1_tag.get_text(strip=True) if h1_tag else ""
         
-        # Suppression des éléments non textuels ou parasites
         for element in soup(["script", "style", "noscript", "nav", "footer", "header", "iframe", "object", "embed", "svg", "form", "button"]):
             element.decompose()
             
         text = soup.get_text(separator=' ')
         
-        # Nettoyage additionnel robuste (Regex) pour les sites WordPress mal formés
-        import re
-        # 1. Supprimer les balises HTML résiduelles (ex: <iframe>, <img ...>)
         text = re.sub(r'<[^>]+>', ' ', text)
-        # 2. Supprimer le code JavaScript/CSS résiduel (lignes avec accolades ou .getAttribute)
         text = re.sub(r'\{.*?\}', ' ', text)
         text = re.sub(r'[A-Za-z0-9_]+\.getAttribute\([^)]+\)', ' ', text)
         text = re.sub(r'function\s*\([^)]*\)\s*\{', ' ', text)
         text = re.sub(r'Math\.random\(\).*?;', ' ', text)
-        # 3. Supprimer les URLs brutes d'images ou de fichiers (souvent générées par srcset)
         text = re.sub(r'https?://[^\s]+\.(webp|png|jpg|jpeg|gif|css|js)', ' ', text)
         
-        # Nettoyage des espaces multiples et sauts de ligne
         lines = (line.strip() for line in text.splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         text = ' '.join(chunk for chunk in chunks if chunk)
         
         return {"title": title, "text": text}
     except Exception as e:
-        logger.error(f"Erreur extraction HTML {bucket}/{path}: {str(e)}")
+        logger.error(f"Erreur d'extraction HTML ({bucket}/{path}) : {str(e)}")
         return {"title": "", "text": ""}
 
-# Définition du schéma de retour de l'UDF
 parse_html_schema = StructType([
     StructField("title", StringType(), True),
     StructField("text", StringType(), True)
 ])
 
-# UDF (User Defined Function) Spark prête à l'emploi
 parse_html_udf = udf(extract_html_from_minio, parse_html_schema)

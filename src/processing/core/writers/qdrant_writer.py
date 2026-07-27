@@ -1,32 +1,43 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
 """
-Qdrant Writer (Base de Données Vectorielle)
--------------------------------------------
-Gère l'écriture des segments (chunks) vectorisés vers Qdrant via le connecteur natif Spark.
-Utile pour la recherche sémantique (RAG).
+Connecteur Qdrant (Base de Données Vectorielle RAG)
+---------------------------------------------------
+Gère l'écriture distribuée (gRPC via Spark) des chunks vectorisés (Embeddings)
+vers le cluster Qdrant pour la recherche sémantique (RAG).
 """
+
 import os
 import logging
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import expr
 
 class QdrantWriter:
+    """
+    Client d'écriture vers Qdrant.
+    
+    Architecture (DataOps) :
+    - Provisionnement Automatique : Crée la collection via l'API REST si elle n'existe pas.
+    - Écriture Haute Performance : Utilise le port gRPC (6334) via le connecteur natif Spark-Qdrant.
+    """
     def __init__(self):
         self.logger = logging.getLogger(__name__)
-        # Qdrant URL (par défaut le conteneur docker local)
         self.qdrant_url = os.environ.get("QDRANT_URL", "http://qdrant:6333")
 
     def write_collection(self, df: DataFrame, collection_name: str = "university_chunks"):
         """
-        Écrit un DataFrame contenant une colonne 'embedding' vers Qdrant.
+        Persiste les vecteurs sémantiques.
+        
+        Args:
+            df (DataFrame): DataFrame contenant au minimum 'id' (UUID string) et 'embedding' (Array de floats).
+            collection_name (str): Nom de la collection vectorielle cible.
         """
-        self.logger.info(f"Writing vectorized chunks to Qdrant collection: {collection_name}")
+        self.logger.info(f"Écriture des chunks vectorisés vers Qdrant (collection: {collection_name})")
         
         try:
-            # Qdrant nécessite un champ 'id' valide (entier ou UUID).
-            # On génère un UUID de manière déterministe ou aléatoire.
-            # Le Spark Qdrant connector gère automatiquement la conversion si on spécifie le bon champ.
-            
-            # S'assurer que la collection existe (le connecteur Spark ne la crée pas automatiquement)
             try:
                 from qdrant_client import QdrantClient
                 from qdrant_client.http.models import Distance, VectorParams
@@ -37,21 +48,18 @@ class QdrantWriter:
                 existing_collections = [c.name for c in collections_response.collections]
                 
                 if collection_name not in existing_collections:
-                    self.logger.info(f"Création de la collection Qdrant '{collection_name}' (384 dimensions)...")
+                    self.logger.info(f"Création de la collection Qdrant '{collection_name}' (384 dims, Cosine)...")
                     client.create_collection(
                         collection_name=collection_name,
                         vectors_config=VectorParams(size=384, distance=Distance.COSINE)
                     )
             except Exception as e:
-                self.logger.warning(f"Impossible de vérifier ou créer la collection Qdrant avec qdrant_client: {e}")
+                self.logger.warning(f"Alerte provisionnement Qdrant (REST API) : {e}")
             
-            # S'assurer que le DataFrame n'est pas vide
             if df.isEmpty():
-                self.logger.warning("Empty dataframe, skipping Qdrant write.")
+                self.logger.warning("Le DataFrame est vide, annulation de l'écriture Qdrant.")
                 return
                 
-            # Écriture via le connecteur natif Spark-Qdrant
-            # Le client Python utilise le port 6333 (REST), mais le connecteur Spark utilise le port 6334 (gRPC)
             spark_qdrant_url = self.qdrant_url.replace("6333", "6334")
             
             (df.write
@@ -61,16 +69,13 @@ class QdrantWriter:
                .option("embedding_field", "embedding")
                .option("id_field", "id")
                .option("schema", df.schema.json())
-               # Configuration optionnelle pour la création automatique de la collection
-               .option("collection_name", collection_name)
-               .option("vector_size", "384") # Taille pour intfloat/multilingual-e5-small
+               .option("vector_size", "384")
                .option("distance", "Cosine")
                .mode("append")
                .save())
                
-            self.logger.info(f"Successfully wrote data to Qdrant collection '{collection_name}'")
+            self.logger.info(f"Insertion vectorielle Qdrant réussie ('{collection_name}')")
             
         except Exception as e:
-            self.logger.error(f"Failed to write to Qdrant: {e}")
-            # On ne fait pas crasher tout le job Spark si Qdrant échoue pendant le MVP
-            self.logger.warning("Continuing Spark job despite Qdrant failure.")
+            self.logger.error(f"Échec de l'écriture vers Qdrant : {e}")
+            self.logger.warning("Le job Spark continue malgré l'erreur Qdrant (Soft failure).")

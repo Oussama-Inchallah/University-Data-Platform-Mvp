@@ -1,3 +1,15 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
+"""
+Interface Utilisateur (Streamlit)
+---------------------------------
+Application web permettant d'interroger la plateforme de données via l'API.
+Propose une recherche lexicale (Elasticsearch), sémantique (Qdrant) et un RAG (Gemini).
+"""
+
 import streamlit as st
 import requests
 import json

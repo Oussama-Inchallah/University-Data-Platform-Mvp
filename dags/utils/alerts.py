@@ -1,3 +1,15 @@
+# ==============================================================================
+# © 2026 University Data Platform
+# Ce fichier fait partie du système central de la Plateforme Data Universitaire.
+# ==============================================================================
+
+"""
+Système d'Alerting (DataOps)
+----------------------------
+Gère l'envoi de notifications (Email, Slack, etc.) en cas d'échec des pipelines.
+Définit également les paramètres par défaut (Retry, Timeout) partagés par tous les DAGs.
+"""
+
 from airflow.utils.email import send_email
 from datetime import timedelta
 import logging
