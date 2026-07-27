@@ -24,12 +24,7 @@ CRAWL_DELAY = 1.0
 DOMAIN_PATTERN = "*fsac.univh2c.ma*"
 CONFIG_PATH = "/app/processing/config/universal_routing.yaml"
 
-default_args = {
-    'owner': 'data_platform_team',
-    'start_date': datetime(2023, 10, 1),
-    'retries': 2,
-    'retry_delay': timedelta(minutes=5),
-}
+from utils.alerts import global_default_args as default_args
 
 def run_ingestion_pipeline(**kwargs):
     execution_date = kwargs.get('ds')

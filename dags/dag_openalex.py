@@ -21,14 +21,7 @@ INSTITUTIONS_TO_CRAWL = {
 }
 CONFIG_PATH = "/app/processing/config/universal_routing.yaml"
 
-default_args = {
-    'owner': 'data_engineering',
-    'depends_on_past': False,
-    'email_on_failure': False,
-    'email_on_retry': False,
-    'retries': 1,
-    'retry_delay': timedelta(minutes=5),
-}
+from utils.alerts import global_default_args as default_args
 
 with DAG(
     'ingestion_openalex_api',
@@ -48,93 +41,94 @@ with DAG(
         execution_date = kwargs.get('ds')
         fetcher = OpenAlexFetcher(execution_date=execution_date)
         
-        for inst_id in INSTITUTIONS_TO_CRAWL.keys():
-            fetcher.fetch_institution_works(institution_id=inst_id)
+        for inst_id, inst_name in INSTITUTIONS_TO_CRAWL.items():
+            fetcher.fetch_institution_works(institution_id=inst_id, institution_name=inst_name)
             
     ingestion_task = fetch_openalex_data()
 
-    # Création dynamique des pipelines de traitement pour chaque institution
-    for inst_id, inst_name in INSTITUTIONS_TO_CRAWL.items():
-        
-        # ---- Task 2 : Phase SILVER (Parsing JSON Explode, Nettoyage, Hudi) ----
-        silver_hudi_task = SparkSubmitOperator(
-            task_id=f"parse_and_normalize_to_hudi_{inst_id}",
-            application="/app/processing/jobs/process_raw_to_hudi.py",
-            conn_id="spark_default",
-            name=f"UniversityData_Silver_OpenAlex_{inst_id}",
-            application_args=[
-                "--config", CONFIG_PATH,
-                "--execution_date", "{{ ds }}",
-                "--source_system", inst_name,  # On utilise le vrai nom (ex: UH2C) au lieu de "OpenAlexAPI"
-                "--domain_pattern", f"openalex/{inst_id}/*",
-                "--force_target_table", "research_publications",
-                "--api_name", "OpenAlexAPI"  # Paramètre dynamique pour identifier la source
-            ],
-            conf={
-                "spark.master": "local[16]",
+    # On récupère tous les noms d'institutions pour les passer au script Spark
+    all_inst_names = ",".join(INSTITUTIONS_TO_CRAWL.values())
+
+    # ---- Task 2 : Phase SILVER (Parsing JSON Explode, Nettoyage, Hudi) ----
+    # Une seule tâche pour traiter TOUTES les institutions téléchargées.
+    silver_hudi_task = SparkSubmitOperator(
+        task_id="parse_and_normalize_to_hudi",
+        application="/app/processing/jobs/process_raw_to_hudi.py",
+        conn_id="spark_default",
+        name="UniversityData_Silver_OpenAlex",
+        application_args=[
+            "--config", CONFIG_PATH,
+            "--execution_date", "{{ ds }}",
+            "--source_system", all_inst_names,  # Liste des universités
+            "--domain_pattern", "openalex/*",   # On lit tout le dossier openalex
+            "--force_target_table", "research_publications",
+            "--api_name", "OpenAlexAPI"
+        ],
+        conf={
+            "spark.master": "local[16]",
             "spark.sql.shuffle.partitions": "16",
-                "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
-                "spark.hadoop.fs.s3a.access.key": "minioadmin",
-                "spark.hadoop.fs.s3a.secret.key": "minioadmin",
-                "spark.hadoop.fs.s3a.path.style.access": "true",
-                "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
-                "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
-                "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
-                "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
-                "hive.metastore.uris": "thrift://hive-metastore:9083",
-            },
-            driver_memory="4g",
-            verbose=True,
-            execution_timeout=timedelta(hours=2),
-        )
+            "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+            "spark.hadoop.fs.s3a.access.key": "minioadmin",
+            "spark.hadoop.fs.s3a.secret.key": "minioadmin",
+            "spark.hadoop.fs.s3a.path.style.access": "true",
+            "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+            "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
+            "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
+            "hive.metastore.uris": "thrift://hive-metastore:9083",
+        },
+        driver_memory="4g",
+        verbose=True,
+        execution_timeout=timedelta(hours=2),
+    )
 
-        # ---- Task 3 : Phase GOLD (Lecture Hudi Incrémental, NLP Chunking) ----
-        gold_search_task = SparkSubmitOperator(
-            task_id=f"embed_and_index_to_search_{inst_id}",
-            application="/app/processing/jobs/process_hudi_to_search.py",
-            conn_id="spark_gold",
-            name=f"UniversityData_GoldNLP_OpenAlex_{inst_id}",
-            application_args=[
-                "--config", CONFIG_PATH,
-                "--execution_date", "{{ ds }}",
-                "--source_system", inst_name,  # Même chose pour filtrer correctement la lecture Hudi
-                ],
-            conf={
-                "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
-                "spark.hadoop.fs.s3a.access.key": "minioadmin",
-                "spark.hadoop.fs.s3a.secret.key": "minioadmin",
-                "spark.hadoop.fs.s3a.path.style.access": "true",
-                "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
-                "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
-                "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
-                "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
-                "hive.metastore.uris": "thrift://hive-metastore:9083",
-            },
-            driver_memory="4g",
-            verbose=True,
-            execution_timeout=timedelta(hours=2),
-        )
+    # ---- Task 3 : Phase GOLD (Lecture Hudi Incrémental, NLP Chunking) ----
+    gold_search_task = SparkSubmitOperator(
+        task_id="embed_and_index_to_search",
+        application="/app/processing/jobs/process_hudi_to_search.py",
+        conn_id="spark_gold",
+        name="UniversityData_GoldNLP_OpenAlex",
+        application_args=[
+            "--config", CONFIG_PATH,
+            "--execution_date", "{{ ds }}",
+            "--source_system", all_inst_names,
+            ],
+        conf={
+            "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+            "spark.hadoop.fs.s3a.access.key": "minioadmin",
+            "spark.hadoop.fs.s3a.secret.key": "minioadmin",
+            "spark.hadoop.fs.s3a.path.style.access": "true",
+            "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+            "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
+            "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
+            "hive.metastore.uris": "thrift://hive-metastore:9083",
+        },
+        driver_memory="4g",
+        verbose=True,
+        execution_timeout=timedelta(hours=2),
+    )
 
-        # Zone Analytique : Hive Metastore Sync
-        sync_catalog_task = SparkSubmitOperator(
-            task_id=f"sync_hudi_to_hive_metastore_{inst_id}",
-            conn_id='spark_gold',
-            application='/app/processing/jobs/sync_hudi_catalog.py',
-            name=f"sync_catalog_OpenAlex_{inst_id}",
-            conf={
-                "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
-                "spark.hadoop.fs.s3a.access.key": "minioadmin",
-                "spark.hadoop.fs.s3a.secret.key": "minioadmin",
-                "spark.hadoop.fs.s3a.path.style.access": "true",
-                "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
-                "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
-                "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
-                "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
-                "hive.metastore.uris": "thrift://hive-metastore:9083",
-            },
-            driver_memory="512m",
-            verbose=True,
-        )
+    # Zone Analytique : Hive Metastore Sync
+    sync_catalog_task = SparkSubmitOperator(
+        task_id="sync_hudi_to_hive_metastore",
+        conn_id='spark_gold',
+        application='/app/processing/jobs/sync_hudi_catalog.py',
+        name="sync_catalog_OpenAlex",
+        conf={
+            "spark.hadoop.fs.s3a.endpoint": "http://minio:9000",
+            "spark.hadoop.fs.s3a.access.key": "minioadmin",
+            "spark.hadoop.fs.s3a.secret.key": "minioadmin",
+            "spark.hadoop.fs.s3a.path.style.access": "true",
+            "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem",
+            "spark.serializer": "org.apache.spark.serializer.KryoSerializer",
+            "spark.sql.extensions": "org.apache.spark.sql.hudi.HoodieSparkSessionExtension",
+            "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.hudi.catalog.HoodieCatalog",
+            "hive.metastore.uris": "thrift://hive-metastore:9083",
+        },
+        driver_memory="512m",
+        verbose=True,
+    )
 
-        # Orchestration pour cette institution
-        ingestion_task >> silver_hudi_task >> gold_search_task >> sync_catalog_task
+    # Orchestration Linéaire
+    ingestion_task >> silver_hudi_task >> gold_search_task >> sync_catalog_task
