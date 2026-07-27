@@ -14,52 +14,7 @@ L'objectif est de créer un système unique et intelligent permettant de :
 - Proposer un assistant IA (RAG) qui génère des réponses en langage naturel.
 - Surveiller l'état de santé de tous les pipelines de données (Observabilité).
 
-Le projet suit l'architecture **Medallion** (ou Multi-Hop), un standard du Data Engineering moderne :
 
-```mermaid
-flowchart LR
-    subgraph SOURCES[SOURCES]
-        SW["Sites Web 11 Facs"]
-        OA["OpenAlex API"]
-    end
-    
-    subgraph BRONZE[BRONZE - Raw Zone]
-        MinIO[("MinIO S3\n5 buckets")]
-    end
-    
-    subgraph SILVER[SILVER - Curated]
-        Hudi[("Apache Hudi\n7 tables")]
-    end
-    
-    subgraph GOLD[GOLD - Search Zone]
-        ES[("Elasticsearch\nfull-text")]
-        Qdrant[("Qdrant\nvectoriel")]
-        Hive[("Hive Metastore\ncatalogue SQL")]
-    end
-    
-    subgraph SERVING[SERVING]
-        UI["Streamlit UI"]
-        API["FastAPI REST"]
-        LLM["Gemini LLM"]
-        BI["Metabase BI"]
-    end
-
-    SW --> MinIO
-    OA --> MinIO
-    
-    MinIO --> Hudi
-    
-    Hudi --> ES
-    Hudi --> Qdrant
-    Hudi --> Hive
-    
-    ES -.-> API
-    Qdrant -.-> API
-    LLM -.-> API
-    API --> UI
-    Hive -.-> BI
-```
----
 
 ## 🏗️ Architecture Globale
 
