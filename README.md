@@ -14,6 +14,34 @@ L'objectif est de créer un système unique et intelligent permettant de :
 - Proposer un assistant IA (RAG) qui génère des réponses en langage naturel.
 - Surveiller l'état de santé de tous les pipelines de données (Observabilité).
 
+## La plateforme suit l'architecture Medallion Lakehouse (Bronze → Silver → Gold) orchestrée par Apache Airflow.
+# 01 - Ingestion des Données (Zone Bronze)
+
+## Vue d'ensemble
+L'ingestion est la première étape du pipeline. Elle consiste à collecter les données brutes depuis deux types de sources :
+1. **Les sites web des facultés** (via le crawler web).
+2. **L'API OpenAlex** (via un client HTTP dédié).
+
+Toutes les données brutes sont stockées dans **MinIO** (Object Store S3-compatible), dans des buckets dédiés.
+
+# 02 - Traitement Silver (Bronze → Hudi)
+
+## Vue d'ensemble
+La phase Silver est le cœur du traitement ETL. Elle lit les fichiers bruts depuis MinIO (Bronze), les parse, les nettoie, les enrichit, puis les stocke dans un format de table structuré (**Apache Hudi**) dans la zone curée de MinIO.
+
+**Script principal** : `src/processing/jobs/process_raw_to_hudi.py`
+**Déclencheur** : Task 2 du DAG Airflow (`parse_and_normalize_to_hudi`)
+**Moteur** : Apache Spark (SparkSubmitOperator, mode local)
+
+# 03 - Traitement Gold (Hudi → Elasticsearch & Qdrant)
+
+## Vue d'ensemble
+La phase Gold lit les données propres depuis les tables Hudi (Silver), applique le traitement NLP (découpage en chunks + vectorisation), et indexe les résultats dans deux moteurs de recherche complémentaires.
+
+**Script principal** : `src/processing/jobs/process_hudi_to_search.py`
+**Déclencheur** : Task 3 du DAG Airflow (`embed_and_index_to_search`)
+**Moteur** : Apache Spark (SparkSubmitOperator, mode local)
+
 
 
 ## 🏗️ Architecture Globale
