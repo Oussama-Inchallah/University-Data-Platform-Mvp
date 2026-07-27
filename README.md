@@ -63,7 +63,21 @@ L'API REST est le **backend** de la plateforme. Elle expose les moteurs de reche
 L'interface utilisateur est une application web **Streamlit** qui permet aux étudiants, enseignants et administrateurs d'interagir avec la plateforme sans aucune compétence technique.
 La plateforme suit l'architecture **Medallion Lakehouse** (Bronze → Silver → Gold) orchestrée par Apache Airflow.
 
+## 07 - Zone Analytique (Hive Metastore, Thrift Server, Metabase)
+
+## Vue d'ensemble
+La zone analytique permet d'interroger les données structurées du Data Lakehouse en **SQL standard**, sans passer par du code Python ou Spark. C'est la couche destinée aux analystes de données et aux tableaux de bord vie metabase BI a traver hive metasote et spark.thrift-server
+
+## 08 - Observabilité de la Plateforme (DataOps)
+
+## Vue d'ensemble
+Le système d'observabilité permet de **surveiller en temps réel** l'état de santé de tous les pipelines de données. Chaque job (scraper, Spark Silver, Spark Gold) enregistre automatiquement son statut d'exécution dans Elasticsearch.
 ![Diagramme d'Architecture](docs/screenshots/Architecture.png)
+
+## 9 - Infrastructure Docker et Déploiement
+
+## Vue d'ensemble
+L'ensemble de la plateforme est conteneurisée avec **Docker Compose**. Un seul fichier (`infra/docker/docker-compose.yml`) définit les 15+ services et leurs interconnexions.
 
 ### Flux de Données
 
