@@ -143,7 +143,7 @@ with tab2:
                         with st.card:
                             st.markdown(f"### 📄 {res.get('type', 'Document').replace('_', ' ').title()}")
                             st.caption(f"🏫 Faculté : **{res.get('faculty', 'Inconnu')}** | 🌍 Langue : {res.get('language', 'Inconnu')} | 🎯 Score : {res.get('score', 0):.2f}")
-                            st.write(res.get('snippet', ''))
+                            st.markdown(res.get('snippet', ''), unsafe_allow_html=True)
                             st.divider()
                 except Exception as e:
                     st.error(f"Erreur de connexion au Moteur de Recherche : {e}")
