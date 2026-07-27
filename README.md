@@ -103,7 +103,7 @@ OpenAlex API ──────────► Fetcher (Cursor Pagination) ─�
                                                 │                         (Catalogue SQL)
                                         ┌───────┴───────┐                       │
                                         ▼               ▼                       ▼
-                                Elasticsearch      NLP + Chunking         Spark Thrift
+                                Elasticsearch  Chunking + Embidding         Spark Thrift
                               (Index Full-Text)         │                  (JDBC/SQL)
                                                         ▼                       │
                                                       Qdrant                    ▼
