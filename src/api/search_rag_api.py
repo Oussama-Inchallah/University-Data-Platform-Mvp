@@ -401,10 +401,16 @@ Réponse :"""
             
             try:
                 response = gemini_model.generate_content(prompt)
-                llm_answer = response.text
+                
+                # Vérifier si la réponse a été bloquée par les filtres de sécurité
+                if not response.candidates or not response.candidates[0].content.parts:
+                    logger.error(f"Génération bloquée par Gemini (Filtres de sécurité) : {response.prompt_feedback}")
+                    llm_answer = "L'IA a refusé de répondre à cette requête (Filtre de sécurité Google activé)."
+                else:
+                    llm_answer = response.text
             except Exception as e:
                 logger.error(f"Erreur lors de la génération LLM : {e}")
-                llm_answer = "Erreur lors de la génération de la réponse par l'IA."
+                llm_answer = f"Erreur de l'API Gemini : {str(e)}"
         elif not gemini_model:
             llm_answer = "Génération RAG désactivée car la clé GEMINI_API_KEY n'est pas configurée."
             
