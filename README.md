@@ -72,12 +72,16 @@ La zone analytique permet d'interroger les données structurées du Data Lakehou
 
 ## Vue d'ensemble
 Le système d'observabilité permet de **surveiller en temps réel** l'état de santé de tous les pipelines de données. Chaque job (scraper, Spark Silver, Spark Gold) enregistre automatiquement son statut d'exécution dans Elasticsearch.
-![Diagramme d'Architecture](docs/screenshots/Architecture.png)
+
 
 ## 9 - Infrastructure Docker et Déploiement
 
 ## Vue d'ensemble
 L'ensemble de la plateforme est conteneurisée avec **Docker Compose**. Un seul fichier (`infra/docker/docker-compose.yml`) définit les 15+ services et leurs interconnexions.
+
+
+
+![Diagramme d'Architecture](docs/screenshots/Architecture.png)
 
 ### Flux de Données
 
