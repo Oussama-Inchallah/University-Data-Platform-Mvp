@@ -432,4 +432,10 @@ L'API expose **3 modes de recherche** :
 
 ## 👥 Équipe
 
+- **ABBA BADR-EDDINE**
+- **INCHALLAH OUSSAMA**
+- **BAROUDI YASSINE**
+- **AGOUZOUL MOHAMED REDA**
+- **BOUKHATEM Mohammed**
+
 Projet réalisé dans le cadre du challenge **Best-of-9 MVP** — Université Hassan II de Casablanca.
