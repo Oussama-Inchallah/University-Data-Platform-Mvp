@@ -32,7 +32,7 @@ OpenAlex API ──────────► Fetcher (Cursor Pagination) ─�
                                                 │                         (Catalogue SQL)
                                         ┌───────┴───────┐                       │
                                         ▼               ▼                       ▼
-                                Elasticsearch      NLP + Chunking         Spark Thrift
+                                Elasticsearch  Chunking + Embidding        Spark Thrift
                               (Index Full-Text)         │                  (JDBC/SQL)
                                                         ▼                       │
                                                       Qdrant                    ▼
@@ -353,9 +353,24 @@ L'API expose **3 modes de recherche** :
 
 ---
 
+## 🚀 Améliorations Futures (Roadmap)
+
+| Priorité | Amélioration | Description |
+|----------|-------------|-------------|
+| 🔴 Haute | **Migration vers Kubernetes (K8s)** | Remplacer Docker Compose par un cluster Kubernetes pour le scaling horizontal automatique des Workers Spark, de l'API et du Frontend. Utilisation de Helm Charts pour le déploiement. |
+| 🔴 Haute | **CI/CD Pipeline** | Mise en place d'un pipeline GitLab CI / GitHub Actions pour le build, les tests et le déploiement automatisé des images Docker. |
+| 🟡 Moyenne | **Fine-tuning du modèle NLP** | Entraîner le modèle d'embeddings sur un corpus universitaire marocain (arabe + français) pour améliorer la précision sémantique. |
+| 🟡 Moyenne | **Authentification & RBAC** | Ajouter une couche d'authentification (Keycloak / OAuth2) avec des rôles par faculté (étudiant, enseignant, admin). |
+| 🟡 Moyenne | **Streaming temps réel (Kafka)** | Remplacer le batch Airflow par un pipeline de streaming Apache Kafka pour une indexation quasi temps réel. |
+| 🟢 Basse | **Cache de réponses RAG (Redis)** | Mettre en cache les réponses de Gemini pour les questions fréquentes afin de réduire la latence et les coûts API. |
+| 🟢 Basse | **Multimodalité (OCR)** | Intégrer un OCR (Tesseract) pour extraire le texte des images et des PDF scannés non lisibles par Tika. |
+
+---
+
 ## 📚 Documentation Complémentaire
 
 - 📖 [**Runbook Opérationnel**](docs/RUNBOOK.md) — Exécuter, surveiller, récupérer
+- 🐛 [**Problèmes Connus & Solutions**](docs/KNOWN_ISSUES.md) — Défis techniques rencontrés et solutions appliquées
 
 ---
 
