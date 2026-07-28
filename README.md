@@ -1,7 +1,6 @@
 # 🎓 University Data Platform MVP
 
 > © 2026 University Data Platform — Plateforme de données moderne pour le contexte universitaire marocain.
-> **Version 1.0 (Livrable Final - Challenge MVP)**
 
 Une plateforme de données **end-to-end** qui unifie l'ingestion web (scraping), le stockage Lakehouse (MinIO + Hudi), le traitement Big Data (Spark), l'indexation sémantique (Qdrant), la recherche full-text (Elasticsearch), la génération augmentée (RAG Gemini) et la Business Intelligence (Metabase) dans une architecture **Medallion** conteneurisée.
 
