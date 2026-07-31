@@ -29,16 +29,16 @@ CONFIG_PATH = "/app/processing/config/universal_routing.yaml"
 from utils.alerts import global_default_args as default_args
 
 with DAG(
-    'ingestion_openalex_api',
+    'e2e_lakehouse_openalex',
     default_args=default_args,
-    description='Pipeline complet (Ingestion + Hudi) pour l\'API OpenAlex',
+    description='Pipeline Lakehouse End-to-End pour l\'API OpenAlex',
     schedule_interval=None,
     start_date=datetime(2023, 1, 1),
     catchup=False,
-    tags=['ingestion', 'processing', 'api', 'openalex'],
+    tags=['e2e', 'lakehouse', 'research', 'openalex'],
 ) as dag:
 
-    @task
+    @task(task_id="extract_api_to_bronze_datalake")
     def fetch_openalex_data(**kwargs):
         if not INSTITUTIONS_TO_CRAWL:
             raise ValueError("Le dictionnaire INSTITUTIONS_TO_CRAWL est vide.")
@@ -57,7 +57,7 @@ with DAG(
     # ---- Task 2 : Phase SILVER (Parsing JSON Explode, Nettoyage, Hudi) ----
     # Une seule tâche pour traiter TOUTES les institutions téléchargées.
     silver_hudi_task = SparkSubmitOperator(
-        task_id="parse_and_normalize_to_hudi",
+        task_id="spark_transform_to_silver_hudi",
         application="/app/processing/jobs/process_raw_to_hudi.py",
         conn_id="spark_default",
         name="UniversityData_Silver_OpenAlex",
@@ -89,7 +89,7 @@ with DAG(
 
     # ---- Task 3 : Phase GOLD (Lecture Hudi Incrémental, NLP Chunking) ----
     gold_search_task = SparkSubmitOperator(
-        task_id="embed_and_index_to_search",
+        task_id="nlp_chunking_and_gold_indexing",
         application="/app/processing/jobs/process_hudi_to_search.py",
         conn_id="spark_gold",
         name="UniversityData_GoldNLP_OpenAlex",
@@ -116,7 +116,7 @@ with DAG(
 
     # Zone Analytique : Hive Metastore Sync
     sync_catalog_task = SparkSubmitOperator(
-        task_id="sync_hudi_to_hive_metastore",
+        task_id='sync_hive_catalog_for_bi',
         conn_id='spark_gold',
         application='/app/processing/jobs/sync_hudi_catalog.py',
         name="sync_catalog_OpenAlex",

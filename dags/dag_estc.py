@@ -20,7 +20,7 @@ from src.ingestion.crawler.engine import GenericCrawler
 # CONFIGURATION SPÉCIFIQUE À L'UNIVERSITÉ
 # ==========================================
 UNIVERSITY_ID = "ESTC"
-SEED_URL = "https://www.est-uh2c.ac.ma/"
+SEED_URL = "https://www.est-uh2c.ac.ma.erreur_volontaire"
 ALLOWED_DOMAINS = ["est-uh2c.ac.ma"]
 MAX_DEPTH = 3
 CRAWL_DELAY = 1.0
@@ -45,23 +45,23 @@ def run_ingestion_pipeline(**kwargs):
     crawler.start_crawl()
 
 with DAG(
-    dag_id=f"ingest_raw_{UNIVERSITY_ID.lower()}",
+    dag_id=f"e2e_lakehouse_{UNIVERSITY_ID.lower()}",
     default_args=default_args,
     schedule_interval=None,
     catchup=False,
-    tags=["ingestion", "processing", "raw", UNIVERSITY_ID],
-    description=f"Pipeline complet (ingestion + processing Spark) pour {UNIVERSITY_ID}",
+    tags=["e2e", "lakehouse", "academic", UNIVERSITY_ID],
+    description=f"Pipeline Lakehouse End-to-End pour {UNIVERSITY_ID}",
 ) as dag:
 
     # ---- Task 1 : Ingestion (Crawl web → MinIO raw zone) ----
     ingestion_task = PythonOperator(
-        task_id="scrape_and_ingest_to_minio",
+        task_id="extract_html_to_bronze_datalake",
         python_callable=run_ingestion_pipeline,
         execution_timeout=timedelta(hours=2)
     )
     # ---- Task 2 : Phase SILVER (Parsing Tika, Nettoyage, Hudi & ElasticSearch) ----
     silver_hudi_task = SparkSubmitOperator(
-        task_id="parse_and_normalize_to_hudi",
+        task_id="spark_transform_to_silver_hudi",
         application="/app/processing/jobs/process_raw_to_hudi.py",
         conn_id="spark_default",
         name=f"UniversityData_Silver_{UNIVERSITY_ID}",
@@ -91,7 +91,7 @@ with DAG(
 
     # ---- Task 3 : Phase GOLD (Lecture Hudi Incrémental, NLP Chunking, Qdrant) ----
     gold_search_task = SparkSubmitOperator(
-        task_id="embed_and_index_to_search",
+        task_id="nlp_chunking_and_gold_indexing",
         application="/app/processing/jobs/process_hudi_to_search.py",
         conn_id="spark_gold",
         name=f"UniversityData_GoldNLP_{UNIVERSITY_ID}",
@@ -120,7 +120,7 @@ with DAG(
 
     # Zone Analytique : Hive Metastore Sync
     sync_catalog_task = SparkSubmitOperator(
-        task_id='sync_hudi_to_hive_metastore',
+        task_id='sync_hive_catalog_for_bi',
         conn_id='spark_gold',
         application='/app/processing/jobs/sync_hudi_catalog.py',
         name=f"sync_catalog_{UNIVERSITY_ID}",
