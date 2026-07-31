@@ -110,6 +110,25 @@ L'onglet **"📈 Observabilité de la Plateforme"** dans l'interface Streamlit (
 - **Erreurs d'ingestion** : filtre sur les échecs uniquement
 - **Tableaux de bord DataOps** : métriques globales (taux de fiabilité, détail par pipeline)
 
+### 2.5 Configurer les Alertes Email en cas d'échec (DataOps)
+
+Pour recevoir automatiquement un email contenant le traceback complet lorsqu'un DAG échoue, vous devez configurer le système d'alertes SMTP dans le fichier `.env` :
+
+1. Générez un **Mot de passe d'application** sur votre compte Google (Gmail) :
+   - Allez dans *Gérer votre compte Google* > *Sécurité* > *Validation en deux étapes* > *Mots de passe des applications*.
+   - Créez un mot de passe (ex: "Airflow Alerts").
+2. Ouvrez le fichier `infra/docker/.env` (créé depuis `.env.example`).
+3. Ajoutez ou modifiez les lignes suivantes avec vos propres adresses :
+   ```env
+   # Adresse expéditrice (celle qui envoie l'alerte)
+   SMTP_USER=votre_adresse_expediteur@gmail.com
+   SMTP_PASSWORD=votre_mot_de_passe_d_application_sans_espaces
+   
+   # Adresse(s) destinataire(s) (séparées par des virgules s'il y en a plusieurs)
+   SMTP_MAIL_TO=destinataire1@gmail.com,destinataire2@gmail.com
+   ```
+4. Relancez les conteneurs pour appliquer la modification : `docker compose up -d`
+
 ---
 
 ## 🛟 3. Récupérer (Dépannage)

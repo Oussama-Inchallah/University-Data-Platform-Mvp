@@ -91,7 +91,7 @@ cp infra/docker/.env.example infra/docker/.env
 
 Éditez `infra/docker/.env` et renseignez :
 - `GEMINI_API_KEY` — votre clé API Google Gemini (optionnel, pour le RAG)
-- `SMTP_PASSWORD` — mot de passe d'application Gmail (optionnel, pour les alertes email)
+- `SMTP_USER` / `SMTP_PASSWORD` / `SMTP_MAIL_TO` — configuration SMTP pour recevoir les alertes Airflow par email (optionnel, supporte plusieurs destinataires séparés par des virgules)
 
 ### 3. Lancer la plateforme
 
