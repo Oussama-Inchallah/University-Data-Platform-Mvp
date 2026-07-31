@@ -13,6 +13,11 @@ Définit également les paramètres par défaut (Retry, Timeout) partagés par t
 from airflow.utils.email import send_email
 from datetime import timedelta
 import logging
+import os
+
+# Extraction de la liste des emails destinataires (séparés par des virgules)
+dest_emails_str = os.environ.get('SMTP_MAIL_TO', 'admin@example.com')
+DEST_EMAILS = [email.strip() for email in dest_emails_str.split(',') if email.strip()]
 
 def failure_alert(context):
     """
@@ -42,11 +47,41 @@ def failure_alert(context):
     """
     
     try:
-        # L'adresse destinataire approuvée par l'utilisateur
-        send_email("badreddineabba@gmail.com", subject, html_content)
-        logging.info(f"Alerte email envoyée avec succès à badreddineabba@gmail.com pour {task_id}")
+        if DEST_EMAILS:
+            send_email(DEST_EMAILS, subject, html_content)
+            logging.info(f"Alerte email envoyée avec succès à {DEST_EMAILS} pour {task_id}")
+        else:
+            logging.warning(f"Aucune adresse email configurée (SMTP_MAIL_TO) pour envoyer l'alerte de {task_id}")
     except Exception as e:
         logging.error(f"Échec de l'envoi de l'alerte email : {e}")
+
+def dag_failure_alert(context):
+    """
+    Callback exécuté lors de l'échec global d'un DAG (ex: OOM Killer, Timeout total).
+    Capté directement par le Scheduler Airflow, même si le Worker est mort.
+    """
+    dag_run = context.get('dag_run')
+    dag_id = dag_run.dag_id
+    
+    subject = f"🚨 [CRITIQUE] Échec global du DAG: {dag_id}"
+    
+    html_content = f"""
+    <h2>Échec Global d'un Pipeline Airflow</h2>
+    <ul>
+        <li><b>DAG :</b> {dag_id}</li>
+        <li><b>Date d'exécution :</b> {context.get('execution_date')}</li>
+        <li><b>Raison probable :</b> Le système a tué le processus brutalement (Out Of Memory - Exit 137), le Worker Airflow a planté, ou une erreur système majeure est survenue.</li>
+    </ul>
+    <h3>Action requise :</h3>
+    <p>Vérifiez les logs de l'infrastructure Docker (<code>docker compose logs airflow-worker</code>) et l'allocation mémoire de votre serveur ou Docker Desktop.</p>
+    """
+    
+    try:
+        if DEST_EMAILS:
+            send_email(DEST_EMAILS, subject, html_content)
+            logging.info(f"Alerte email de DAG envoyée avec succès à {DEST_EMAILS} pour le crash de {dag_id}")
+    except Exception as e:
+        logging.error(f"Échec de l'envoi de l'alerte email de DAG : {e}")
 
 
 
@@ -54,7 +89,7 @@ def failure_alert(context):
 global_default_args = {
     'owner': 'data_engineering',
     'depends_on_past': False,
-    'email': ['badreddineabba@gmail.com'],
+    'email': DEST_EMAILS,
     'email_on_failure': False,  # On désactive le mail par défaut d'Airflow car on utilise notre callback personnalisé plus lisible
     'email_on_retry': False,
     'retries': 1,
