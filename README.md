@@ -371,6 +371,8 @@ L'API expose **3 modes de recherche** :
 
 - 📖 [**Runbook Opérationnel**](docs/RUNBOOK.md) — Exécuter, surveiller, récupérer
 - 🐛 [**Problèmes Connus & Solutions**](docs/KNOWN_ISSUES.md) — Défis techniques rencontrés et solutions appliquées
+- 📋 [**Fiche Descriptive Globale**](docs/FICHE_DESCRIPTIVE_GLOBALE.md) — Vue d'ensemble du projet
+- 🧩 [**Fiches Descriptives Composants**](docs/FICHES_DESCRIPTIVES_COMPOSANTS.md) — Détail de l'architecture et des modules
 
 ---
 
