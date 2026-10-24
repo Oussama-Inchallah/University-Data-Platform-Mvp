@@ -11,8 +11,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copier le requirements
 COPY infra/docker/requirements.api.txt /app/requirements.txt
 
-# Installer les dependances en forçant la version CPU de PyTorch pour éviter de télécharger CUDA (gain de ~2.5 Go)
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu \
+# Installer PyTorch en version CPU. PyPI reste disponible pour les dependances
+# transitoires absentes de l'index PyTorch, comme flit_core.
+RUN pip install --no-cache-dir \
+        torch==2.2.2 torchvision==0.17.2 torchaudio==2.2.2 \
+        --index-url https://download.pytorch.org/whl/cpu \
+        --extra-index-url https://pypi.org/simple \
     && pip install --no-cache-dir -r requirements.txt
 
 # Pre-telecharger le modele HuggingFace lors du build pour un demarrage instantane
