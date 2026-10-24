@@ -120,7 +120,7 @@ services:
       <<: *airflow-common-depends-on
 
   minio:
-    image: minio/minio:latest
+    image: dhi.io/minio:latest
     ports:
       - "9000:9000"
       - "9001:9001"
@@ -133,7 +133,7 @@ services:
     restart: always
 
   minio-init:
-    image: minio/mc:latest
+    image: pgsty/silo
     depends_on:
       - minio
     entrypoint: >
